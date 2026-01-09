@@ -1,10 +1,21 @@
 import { eq, desc, and } from 'drizzle-orm';
 import { db } from '../lib/db.js';
 import { auditLogs, type NewAuditLog, type AuditLog } from '../../db/schema.js';
+import { LogPublisherService } from './log-publisher.service.js';
 
 export class AuditService {
+  private logPublisher: LogPublisherService;
+
+  constructor() {
+    this.logPublisher = LogPublisherService.getInstance();
+  }
+
   async log(data: Omit<NewAuditLog, 'id' | 'timestamp'>): Promise<AuditLog> {
     const [log] = await db.insert(auditLogs).values(data).returning();
+
+    // Publish log for real-time streaming
+    await this.logPublisher.publishLog(log);
+
     return log;
   }
 
