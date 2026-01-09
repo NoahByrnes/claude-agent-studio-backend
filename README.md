@@ -1,6 +1,11 @@
 # Claude Agent Studio - Backend
 
-Backend API service for Claude Agent Studio.
+Backend API service and agent worker for Claude Agent Studio.
+
+## Structure
+
+- `/` - API service (Fastify)
+- `/agent-runtime` - Worker service (BullMQ)
 
 ## Tech Stack
 - Fastify (API framework)
