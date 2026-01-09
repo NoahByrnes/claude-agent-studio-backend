@@ -1,6 +1,6 @@
 import { Worker, Job } from 'bullmq';
 import { AgentRuntime } from './index.js';
-import type { AgentConfig } from '../src/shared-types/index.js';
+import type { AgentConfig } from './shared-types/index.js';
 import dotenv from 'dotenv';
 
 dotenv.config();

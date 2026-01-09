@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { AgentConfig } from '../src/shared-types/index.js';
+import type { AgentConfig } from './shared-types/index.js';
 import { createAuditHook } from './hooks.js';
 
 export interface AgentRuntimeOptions {
