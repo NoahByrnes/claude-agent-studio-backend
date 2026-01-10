@@ -1,16 +1,27 @@
-FROM docker.io/cloudflare/sandbox:0.4.11
-# Alternative for E2B: FROM e2b/sandbox
+# E2B Base Image - Full Ubuntu 22.04 environment
+FROM ubuntu:22.04
 
-# Install Node.js 20 and build tools
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install essential tools
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
     unzip \
     jq \
     git \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    ca-certificates \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Playwright system dependencies (for browser automation)
+RUN npx playwright install-deps chromium || true
 
 # Create workspace directory
 RUN mkdir -p /workspace/agent-runtime
@@ -33,10 +44,11 @@ COPY server.js /workspace/server.js
 # Verify installations
 RUN node --version && npm --version
 
+# Set working directory
+WORKDIR /workspace
+
 # Expose port for HTTP server
 EXPOSE 8080
 
 # Start the HTTP server
-# This is required for Cloudflare Containers - the container will not be considered
-# "ready" until a service is listening on port 8080
 CMD ["node", "/workspace/server.js"]
