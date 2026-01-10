@@ -1,0 +1,18 @@
+# Ignore agent-runtime - only for E2B containers, not Railway
+agent-runtime/
+
+# Ignore local development
+.env
+.env.local
+
+# Ignore build artifacts
+dist/
+node_modules/
+
+# Ignore IDE
+.vscode/
+.idea/
+
+# Ignore git
+.git/
+.gitignore
