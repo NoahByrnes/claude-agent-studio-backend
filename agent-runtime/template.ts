@@ -1,23 +1,24 @@
 import { Template } from 'e2b'
-import { readFileSync } from 'fs'
-import { join } from 'path'
 
-/**
- * E2B Template Definition for Claude Agent Studio
- *
- * This template creates a full Ubuntu 22.04 environment with:
- * - Node.js 20
- * - Claude Agent SDK
- * - Playwright for browser automation
- * - HTTP server for async execution
- */
-
-// Read Dockerfile content
-const dockerfileContent = readFileSync(join(__dirname, 'Dockerfile'), 'utf-8')
-
-// Create template from Dockerfile
-export default Template()
-  .fromDockerfile(dockerfileContent)
-  .onStart({ cmd: 'node /workspace/server.js' })
-  .cpuCount(2)
-  .memoryMB(2048) // 2GB for browser automation
+export const template = Template()
+  .fromImage('ubuntu:22.04')
+  .setUser('root')
+  .setWorkdir('/')
+  .setEnvs({
+    'DEBIAN_FRONTEND': 'noninteractive',
+  })
+  .runCmd('apt-get update && apt-get install -y curl wget unzip jq git ca-certificates gnupg && rm -rf /var/lib/apt/lists/*')
+  .runCmd('curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*')
+  .runCmd('npx playwright install-deps chromium || true')
+  .runCmd('mkdir -p /workspace/agent-runtime')
+  .copy('package*.json', '/workspace/agent-runtime/')
+  .copy('tsconfig.json', '/workspace/agent-runtime/')
+  .setWorkdir('/workspace/agent-runtime')
+  .runCmd('npm install')
+  .copy('src', '/workspace/agent-runtime/src')
+  .copy('.claude', '/workspace/agent-runtime/.claude')
+  .copy('server.js', '/workspace/server.js')
+  .runCmd('node --version && npm --version')
+  .setWorkdir('/workspace')
+  .setUser('user')
+  .setStartCmd('sudo node /workspace/server.js', 'sleep 20')

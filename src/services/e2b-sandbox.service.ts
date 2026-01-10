@@ -1,3 +1,4 @@
+import { Sandbox } from '@e2b/sdk';
 import type { Agent } from '../../db/schema.js';
 import { AgentService } from './agent.service.js';
 
@@ -10,26 +11,40 @@ export interface E2BSandboxDeployment {
   template: string;
 }
 
+interface SandboxInstance {
+  sandbox: Sandbox;
+  deployment: E2BSandboxDeployment;
+}
+
 /**
  * E2B Sandbox Service
  *
  * Manages agent deployment to E2B sandboxes.
  * Each sandbox runs the Claude Agent SDK in a full Ubuntu environment.
- *
- * TODO: This is a stub implementation. Full E2B integration will be completed
- * once the agent-runtime template is built and pushed to E2B.
  */
 export class E2BSandboxService {
   private agentService: AgentService;
-  private deployments: Map<string, E2BSandboxDeployment> = new Map();
+  private sandboxes: Map<string, SandboxInstance> = new Map();
+  private apiKey: string;
+  private templateId: string;
 
   constructor() {
     this.agentService = new AgentService();
+
+    // Get E2B configuration from environment
+    this.apiKey = process.env.E2B_API_KEY || '';
+    this.templateId = process.env.E2B_TEMPLATE_ID || '';
+
+    if (!this.apiKey) {
+      console.warn('⚠️  E2B_API_KEY not configured - sandbox deployment will fail');
+    }
+    if (!this.templateId) {
+      console.warn('⚠️  E2B_TEMPLATE_ID not configured - sandbox deployment will fail');
+    }
   }
 
   /**
    * Deploy agent to E2B sandbox
-   * TODO: Implement with actual E2B SDK once template is ready
    */
   async deploy(agentId: string, userId: string): Promise<E2BSandboxDeployment> {
     const agent = await this.agentService.getById(agentId, userId);
@@ -37,40 +52,94 @@ export class E2BSandboxService {
       throw new Error(`Agent ${agentId} not found`);
     }
 
-    console.log(`🚀 [STUB] Would deploy agent ${agentId} to E2B...`);
-    console.log(`   Template: ${process.env.E2B_TEMPLATE_ID || 'not-configured'}`);
+    if (!this.apiKey || !this.templateId) {
+      throw new Error('E2B_API_KEY and E2B_TEMPLATE_ID must be configured');
+    }
+
+    console.log(`🚀 Deploying agent ${agentId} to E2B...`);
+    console.log(`   Template: ${this.templateId}`);
 
     // Update agent status
     await this.agentService.updateStatus(agentId, userId, 'deploying');
 
-    const deployment: E2BSandboxDeployment = {
-      id: `e2b-${agentId}`,
-      sandboxId: `stub-${Date.now()}`,
-      agentId,
-      status: 'ready',
-      createdAt: new Date(),
-      template: process.env.E2B_TEMPLATE_ID || 'not-configured',
-    };
+    try {
+      // Create E2B sandbox from template
+      const sandbox = await Sandbox.create({
+        template: this.templateId,
+        apiKey: this.apiKey,
+        metadata: {
+          agentId,
+          userId,
+          deployedAt: new Date().toISOString(),
+        },
+        // 30 minute timeout
+        timeout: 1800000,
+      });
 
-    this.deployments.set(agentId, deployment);
+      console.log(`✅ E2B sandbox created: ${sandbox.id}`);
 
-    // Simulate deployment delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait for HTTP server to be ready (port 8080)
+      console.log(`   Waiting for HTTP server on port 8080...`);
+      await this.waitForPort(sandbox, 8080, 30000);
 
-    await this.agentService.updateStatus(agentId, userId, 'running');
+      const deployment: E2BSandboxDeployment = {
+        id: `e2b-${agentId}`,
+        sandboxId: sandbox.id,
+        agentId,
+        status: 'ready',
+        createdAt: new Date(),
+        template: this.templateId,
+      };
 
-    console.log(`✅ [STUB] Agent ${agentId} deployment simulated`);
-    console.log(`   Real implementation requires:`);
-    console.log(`   1. Build template: cd agent-runtime && e2b template build`);
-    console.log(`   2. Set E2B_API_KEY in environment`);
-    console.log(`   3. Set E2B_TEMPLATE_ID in environment`);
+      this.sandboxes.set(agentId, { sandbox, deployment });
 
-    return deployment;
+      await this.agentService.updateStatus(agentId, userId, 'running');
+
+      console.log(`✅ Agent ${agentId} deployed successfully`);
+      console.log(`   Sandbox ID: ${sandbox.id}`);
+      console.log(`   HTTP endpoint: http://${sandbox.getHostname(8080)}`);
+
+      return deployment;
+    } catch (error: any) {
+      console.error(`❌ Deployment failed for agent ${agentId}:`, error.message);
+      await this.agentService.updateStatus(agentId, userId, 'stopped');
+      throw new Error(`E2B deployment failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Wait for a port to be ready
+   */
+  private async waitForPort(
+    sandbox: Sandbox,
+    port: number,
+    timeoutMs: number = 30000
+  ): Promise<void> {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        // Try to connect to the port using curl
+        const result = await sandbox.process.startAndWait({
+          cmd: `curl -f http://localhost:${port}/health || exit 1`,
+        });
+
+        if (result.exitCode === 0) {
+          console.log(`   ✅ Port ${port} is ready`);
+          return;
+        }
+      } catch (error) {
+        // Port not ready yet, wait and retry
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    throw new Error(`Timeout waiting for port ${port} to be ready`);
   }
 
   /**
    * Execute prompt in agent sandbox
-   * TODO: Implement with actual E2B SDK
    */
   async execute(
     agentId: string,
@@ -78,35 +147,72 @@ export class E2BSandboxService {
     prompt: string,
     env?: Record<string, string>
   ): Promise<{ sessionId: string; status: string }> {
-    const deployment = this.deployments.get(agentId);
-    if (!deployment) {
-      throw new Error(`No deployment found for agent ${agentId}. Deploy first.`);
+    const instance = this.sandboxes.get(agentId);
+    if (!instance) {
+      throw new Error(`No sandbox found for agent ${agentId}. Deploy first.`);
     }
 
-    console.log(`🤖 [STUB] Would execute prompt in agent ${agentId}...`);
-    console.log(`   Prompt: ${prompt.substring(0, 100)}...`);
+    const { sandbox, deployment } = instance;
+
+    console.log(`🤖 Executing prompt in agent ${agentId}...`);
+    console.log(`   Sandbox: ${sandbox.id}`);
     console.log(`   Session: ${sessionId}`);
+    console.log(`   Prompt: ${prompt.substring(0, 100)}...`);
 
-    deployment.status = 'running';
+    try {
+      deployment.status = 'running';
 
-    // TODO: Actual execution via E2B sandbox
+      // Send HTTP request to container's /execute endpoint
+      const response = await sandbox.process.startAndWait({
+        cmd: `curl -X POST http://localhost:8080/execute \\
+          -H "Content-Type: application/json" \\
+          -d '${JSON.stringify({
+            agentId,
+            sessionId,
+            prompt,
+            env: {
+              ...env,
+              BACKEND_API_URL: process.env.BACKEND_API_URL,
+              INTERNAL_API_KEY: process.env.INTERNAL_API_KEY,
+            }
+          }).replace(/'/g, "'\"'\"'")}'`,
+      });
 
-    return {
-      sessionId,
-      status: 'started',
-    };
+      if (response.exitCode !== 0) {
+        throw new Error(`HTTP request failed: ${response.stderr}`);
+      }
+
+      console.log(`✅ Prompt execution started`);
+      console.log(`   Response: ${response.stdout.substring(0, 200)}`);
+
+      return {
+        sessionId,
+        status: 'started',
+      };
+    } catch (error: any) {
+      console.error(`❌ Execution failed:`, error.message);
+      deployment.status = 'error';
+      throw new Error(`Execution failed: ${error.message}`);
+    }
   }
 
   /**
    * Stop and cleanup sandbox
    */
   async stop(agentId: string, userId: string): Promise<void> {
-    const deployment = this.deployments.get(agentId);
+    const instance = this.sandboxes.get(agentId);
 
-    if (deployment) {
-      console.log(`🛑 [STUB] Stopping sandbox for agent ${agentId}...`);
-      deployment.status = 'stopped';
-      this.deployments.delete(agentId);
+    if (instance) {
+      console.log(`🛑 Stopping sandbox for agent ${agentId}...`);
+
+      try {
+        await instance.sandbox.close();
+        console.log(`   ✅ Sandbox ${instance.sandbox.id} closed`);
+      } catch (error: any) {
+        console.error(`   ⚠️  Error closing sandbox:`, error.message);
+      }
+
+      this.sandboxes.delete(agentId);
     }
 
     await this.agentService.updateStatus(agentId, userId, 'stopped');
@@ -117,49 +223,102 @@ export class E2BSandboxService {
    * Get deployment info
    */
   async getDeployment(agentId: string): Promise<E2BSandboxDeployment | undefined> {
-    return this.deployments.get(agentId);
+    const instance = this.sandboxes.get(agentId);
+    return instance?.deployment;
   }
 
   /**
    * Get all deployments
    */
   async getAllDeployments(): Promise<E2BSandboxDeployment[]> {
-    return Array.from(this.deployments.values());
+    return Array.from(this.sandboxes.values()).map(i => i.deployment);
   }
 
   /**
    * Upload files to sandbox
-   * TODO: Implement with actual E2B SDK
    */
   async uploadFiles(
     agentId: string,
     files: { path: string; content: string }[]
   ): Promise<void> {
-    console.log(`📁 [STUB] Would upload ${files.length} files to sandbox ${agentId}`);
+    const instance = this.sandboxes.get(agentId);
+    if (!instance) {
+      throw new Error(`No sandbox found for agent ${agentId}`);
+    }
+
+    console.log(`📁 Uploading ${files.length} files to sandbox ${agentId}...`);
+
+    for (const file of files) {
+      try {
+        await instance.sandbox.filesystem.write(file.path, file.content);
+        console.log(`   ✅ Uploaded: ${file.path}`);
+      } catch (error: any) {
+        console.error(`   ❌ Failed to upload ${file.path}:`, error.message);
+        throw error;
+      }
+    }
+
+    console.log(`✅ All files uploaded successfully`);
   }
 
   /**
    * Install npm packages in sandbox
-   * TODO: Implement with actual E2B SDK
    */
   async installPackages(agentId: string, packages: string[]): Promise<void> {
-    console.log(`📦 [STUB] Would install packages in sandbox ${agentId}: ${packages.join(', ')}`);
+    const instance = this.sandboxes.get(agentId);
+    if (!instance) {
+      throw new Error(`No sandbox found for agent ${agentId}`);
+    }
+
+    console.log(`📦 Installing packages in sandbox ${agentId}: ${packages.join(', ')}`);
+
+    try {
+      const result = await instance.sandbox.process.startAndWait({
+        cmd: `cd /workspace/agent-runtime && npm install ${packages.join(' ')}`,
+        cwd: '/workspace/agent-runtime',
+      });
+
+      if (result.exitCode !== 0) {
+        throw new Error(`npm install failed: ${result.stderr}`);
+      }
+
+      console.log(`✅ Packages installed successfully`);
+      console.log(result.stdout);
+    } catch (error: any) {
+      console.error(`❌ Package installation failed:`, error.message);
+      throw error;
+    }
   }
 
   /**
    * Execute command in sandbox
-   * TODO: Implement with actual E2B SDK
    */
   async exec(
     agentId: string,
     command: string,
     options?: { timeout?: number }
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    console.log(`⚙️  [STUB] Would execute command in sandbox ${agentId}: ${command}`);
-    return {
-      stdout: '[STUB] Command output would appear here',
-      stderr: '',
-      exitCode: 0,
-    };
+    const instance = this.sandboxes.get(agentId);
+    if (!instance) {
+      throw new Error(`No sandbox found for agent ${agentId}`);
+    }
+
+    console.log(`⚙️  Executing command in sandbox ${agentId}: ${command}`);
+
+    try {
+      const result = await instance.sandbox.process.startAndWait({
+        cmd: command,
+        timeout: options?.timeout || 60000,
+      });
+
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode ?? 0,
+      };
+    } catch (error: any) {
+      console.error(`❌ Command execution failed:`, error.message);
+      throw error;
+    }
   }
 }

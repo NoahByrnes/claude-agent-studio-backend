@@ -1,33 +1,18 @@
-#!/usr/bin/env tsx
+import { Template, defaultBuildLogger } from 'e2b'
+import { template } from './template'
 
-/**
- * Development build script for E2B template
- *
- * Usage: npm run build:dev
- */
+async function main() {
+  console.log('🏗️  Building E2B template for Claude Agent Studio...')
 
-import template from './template'
+  const result = await Template.build(template, {
+    alias: 'claude-agent-studio-nb',
+    onBuildLogs: defaultBuildLogger(),
+  });
 
-async function build() {
-  console.log('🏗️  Building E2B template for development...')
-  console.log('   Name: claude-agent-studio')
-
-  try {
-    // Build the template
-    const result = await template.build({ name: 'claude-agent-studio' })
-
-    console.log('✅ Template built successfully!')
-    console.log(`   Template: ${result}`)
-
-    // Save template ID to .env for easy access
-    console.log('\n💡 Add this to your backend .env file:')
-    console.log(`   E2B_TEMPLATE_ID=${result}`)
-
-    return result
-  } catch (error) {
-    console.error('❌ Template build failed:', error)
-    process.exit(1)
-  }
+  console.log('\n✅ Template built successfully!')
+  console.log(`   Template ID: ${result}`)
+  console.log('\n💡 Add this to your backend .env file:')
+  console.log(`   E2B_TEMPLATE_ID=${result}`)
 }
 
-build()
+main().catch(console.error);
