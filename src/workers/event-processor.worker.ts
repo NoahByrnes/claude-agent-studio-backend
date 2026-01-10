@@ -1,10 +1,12 @@
 import { createAgentEventWorker } from '../lib/queue.js';
 import { AgentService } from '../services/agent.service.js';
-import { AgentExecutorService } from '../services/agent-executor.service.js';
+// DEPRECATED: Replaced with container-based execution
+// import { AgentExecutorService } from '../services/agent-executor.service.js';
 import { EventRouterService } from '../services/event-router.service.js';
 
 const agentService = new AgentService();
-const executorService = new AgentExecutorService();
+// DEPRECATED: Replaced with container-based execution
+// const executorService = new AgentExecutorService();
 const eventRouterService = new EventRouterService();
 
 export interface EventProcessorJobData {
@@ -42,6 +44,11 @@ export const eventProcessorWorker = createAgentEventWorker(async (job) => {
     // Generate session ID for this event
     const sessionId = `${data.agentId}-${data.eventId}`;
 
+    // TODO: Replace with container-based execution
+    console.log(`⚠️  Container-based execution not yet implemented`);
+    console.log(`   Event will trigger agent in E2B/Cloudflare container in Phase 2`);
+
+    /* DEPRECATED - Old custom agentic framework approach
     // Execute the agent
     const result = await executorService.execute({
       agent,
@@ -63,6 +70,7 @@ export const eventProcessorWorker = createAgentEventWorker(async (job) => {
     console.log(`Output: ${result.output}`);
     console.log(`Tools used: ${result.toolsUsed?.join(', ') || 'none'}`);
     console.log(`Turns: ${result.turnsCompleted}`);
+    */
 
   } catch (error: any) {
     console.error(`Error processing event ${data.eventId}:`, error);

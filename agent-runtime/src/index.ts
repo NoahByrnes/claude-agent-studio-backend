@@ -1,128 +1,100 @@
-import Anthropic from '@anthropic-ai/sdk';
-import type { AgentConfig } from './shared-types/index.js';
-import { createAuditHook } from './hooks.js';
+#!/usr/bin/env node
+/**
+ * Claude Agent Studio - Agent Runtime
+ *
+ * This is the agent executor that runs inside containers.
+ * It receives prompts via command line and streams output as JSON.
+ */
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-export interface AgentRuntimeOptions {
-  config: AgentConfig;
-  apiKey: string;
-  backendUrl: string;
-  agentId: string;
-}
+/**
+ * Main agent execution
+ */
+async function main() {
+  // Get prompt from command line arguments
+  const prompt = process.argv.slice(2).join(" ");
 
-export class AgentRuntime {
-  private client: Anthropic;
-  private config: AgentConfig;
-  private backendUrl: string;
-  private agentId: string;
-
-  constructor(options: AgentRuntimeOptions) {
-    this.client = new Anthropic({
-      apiKey: options.apiKey,
-    });
-    this.config = options.config;
-    this.backendUrl = options.backendUrl;
-    this.agentId = options.agentId;
+  if (!prompt) {
+    console.error("❌ Error: Please provide a prompt");
+    console.error("\nUsage: npm start <prompt>");
+    console.error("Example: npm start 'Check my email and summarize important messages'");
+    process.exit(1);
   }
 
-  async processEvent(event: any): Promise<void> {
-    console.log(`🤖 Processing event for agent ${this.agentId}:`, event);
+  // Log to stderr (won't interfere with JSON stdout)
+  console.error("=".repeat(60));
+  console.error("Claude Agent Studio Runtime");
+  console.error("=".repeat(60));
+  console.error(`\nPrompt: ${prompt}\n`);
 
-    try {
-      // Build the messages for Claude
-      const messages: Anthropic.MessageParam[] = [
-        {
-          role: 'user',
-          content: this.formatEventAsMessage(event),
-        },
-      ];
+  const debug = process.env.DEBUG === 'true';
 
-      // Call Claude API
-      const response = await this.client.messages.create({
-        model: this.config.model || 'claude-sonnet-4-5',
-        max_tokens: 4096,
-        temperature: this.config.temperature || 0.2,
-        system: this.config.system_prompt,
-        messages,
-      });
-
-      console.log('✅ Claude response:', response);
-
-      // Log the response via audit hook
-      await this.auditLog('agent_response', {
-        event,
-        response: response.content,
-      });
-    } catch (error) {
-      console.error('❌ Error processing event:', error);
-      await this.auditLog('agent_error', {
-        event,
-        error: String(error),
-      });
-      throw error;
-    }
+  if (debug) {
+    console.error('[DEBUG] Environment check:');
+    console.error(`[DEBUG] - Working directory: ${process.cwd()}`);
+    console.error(`[DEBUG] - Node version: ${process.version}`);
+    console.error(`[DEBUG] - ANTHROPIC_API_KEY: ${process.env.ANTHROPIC_API_KEY ? 'SET' : 'NOT SET'}`);
+    console.error('');
   }
 
-  private formatEventAsMessage(event: any): string {
-    switch (event.eventType) {
-      case 'email':
-        return `New email received:\nFrom: ${event.payload.from}\nSubject: ${event.payload.subject}\n\nBody:\n${event.payload.body}`;
-      case 'sms':
-        return `New SMS received:\nFrom: ${event.payload.from}\nMessage: ${event.payload.message}`;
-      case 'webhook':
-        return `Webhook event received:\n${JSON.stringify(event.payload, null, 2)}`;
-      case 'scheduled':
-        return `Scheduled task triggered:\n${JSON.stringify(event.payload, null, 2)}`;
-      default:
-        return `Event received:\n${JSON.stringify(event, null, 2)}`;
-    }
-  }
+  try {
+    let messageCount = 0;
+    const startTime = Date.now();
 
-  private async auditLog(actionType: string, data: any): Promise<void> {
-    try {
-      await fetch(`${this.backendUrl}/api/agents/${this.agentId}/audit`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action_type: actionType,
-          input_data: data,
-          timestamp: new Date().toISOString(),
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to send audit log:', error);
-    }
-  }
-}
+    // Execute agent using Claude Agent SDK
+    for await (const message of query({
+      prompt,
+      options: {
+        // Set working directory for skill discovery
+        cwd: process.cwd(),
 
-// Example standalone usage
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const runtime = new AgentRuntime({
-    config: {
-      name: 'Test Agent',
-      system_prompt: 'You are a helpful assistant.',
-      model: 'claude-sonnet-4-5',
-      temperature: 0.2,
-      mcp_servers: [],
-      deployment: {
-        type: 'event-driven',
-        sandbox: 'local',
-        auto_restart: false,
+        // Allow agent to use tools
+        // Skills are custom tools defined in .claude/skills/
+        allowedTools: ["Skill", "Read", "Write", "Edit", "Bash", "Grep", "Glob"],
+
+        // Load skills from project .claude/skills/ directory
+        settingSources: ["project"],
+
+        // Allow up to 50 turns for complex multi-step tasks
+        maxTurns: 50,
       },
-    },
-    apiKey: process.env.ANTHROPIC_API_KEY || '',
-    backendUrl: process.env.BACKEND_URL || 'http://localhost:3000',
-    agentId: 'test-agent-id',
-  });
+    })) {
+      messageCount++;
+      const elapsed = Date.now() - startTime;
 
-  // Test event
-  await runtime.processEvent({
-    eventType: 'email',
-    payload: {
-      from: 'test@example.com',
-      subject: 'Test Email',
-      body: 'This is a test email.',
-    },
-  });
+      if (debug) {
+        console.error(`[DEBUG] Message #${messageCount} at ${elapsed}ms - Type: ${message?.type || 'unknown'}`);
+      }
+
+      // Stream output to stdout as JSON (for parsing by container server)
+      // Each message is a complete JSON object on its own line
+      if (message && typeof message === "object") {
+        console.log(JSON.stringify(message));
+      }
+
+      if (debug && messageCount % 5 === 0) {
+        console.error(`[DEBUG] Progress: ${messageCount} messages in ${elapsed}ms`);
+      }
+    }
+
+    if (debug) {
+      const totalTime = Date.now() - startTime;
+      console.error(`[DEBUG] Completed: ${messageCount} messages in ${totalTime}ms`);
+    }
+
+    console.error("\n" + "=".repeat(60));
+    console.error("Task Complete!");
+    console.error("=".repeat(60));
+
+  } catch (error) {
+    console.error("\n❌ Failed to complete task:");
+    console.error(error);
+    process.exit(1);
+  }
 }
+
+// Run the agent
+main().catch((error) => {
+  console.error("Fatal error:", error);
+  process.exit(1);
+});

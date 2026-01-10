@@ -1,6 +1,7 @@
 import type { Agent } from '../../db/schema.js';
 import { AgentService } from './agent.service.js';
-import { AgentExecutorService } from './agent-executor.service.js';
+// DEPRECATED: Replaced with container-based execution
+// import { AgentExecutorService } from './agent-executor.service.js';
 
 export interface SandboxDeployment {
   id: string;
@@ -12,13 +13,15 @@ export interface SandboxDeployment {
 
 export class SandboxService {
   private agentService: AgentService;
-  private executorService: AgentExecutorService;
+  // DEPRECATED: Replaced with container-based execution
+  // private executorService: AgentExecutorService;
   private deployments: Map<string, SandboxDeployment>;
   private runningAgents: Map<string, NodeJS.Timeout>;
 
   constructor() {
     this.agentService = new AgentService();
-    this.executorService = new AgentExecutorService();
+    // DEPRECATED: Replaced with container-based execution
+    // this.executorService = new AgentExecutorService();
     this.deployments = new Map();
     this.runningAgents = new Map();
   }
@@ -175,6 +178,11 @@ export class SandboxService {
   private async executeAgentLocally(agent: Agent, sessionId: string): Promise<void> {
     console.log(`🤖 Executing agent ${agent.id} (${agent.name})`);
 
+    // TODO: Replace with container-based execution
+    console.log(`⚠️  Container-based execution not yet implemented`);
+    console.log(`   Agent will be deployed to E2B/Cloudflare containers in Phase 2`);
+
+    /* DEPRECATED - Old custom agentic framework approach
     try {
       const result = await this.executorService.execute({
         agent,
@@ -191,5 +199,6 @@ export class SandboxService {
     } catch (error: any) {
       console.error(`❌ Error executing agent ${agent.id}:`, error);
     }
+    */
   }
 }

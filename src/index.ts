@@ -4,6 +4,7 @@ import websocket from '@fastify/websocket';
 import { agentRoutes } from './routes/agents.js';
 import { logRoutes } from './routes/logs.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { internalRoutes } from './routes/internal.js';
 import './workers/event-processor.worker.js';
 
 const PORT = parseInt(process.env.PORT || '3000');
@@ -31,6 +32,7 @@ fastify.get('/health', async () => {
 await fastify.register(agentRoutes);
 await fastify.register(logRoutes);
 await fastify.register(webhookRoutes);
+await fastify.register(internalRoutes);
 
 // Start server
 try {

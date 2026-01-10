@@ -51,4 +51,3 @@ export const agentEvents = pgTable('agent_events', {
     processed: timestamp('processed'),
     created_at: timestamp('created_at').notNull().defaultNow(),
 });
-//# sourceMappingURL=schema.js.map

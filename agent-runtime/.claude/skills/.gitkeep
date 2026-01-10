@@ -1,0 +1,21 @@
+# Skills Directory
+
+Custom skills for Claude Agent Studio agents will be stored here.
+
+Each skill should be in its own directory with:
+- SKILL.md - Skill metadata and quick start
+- REFERENCE.md - Detailed API documentation
+- EXAMPLES.md - Code examples
+
+Example structure:
+```
+.claude/skills/
+├── email-automation/
+│   ├── SKILL.md
+│   ├── REFERENCE.md
+│   └── EXAMPLES.md
+└── github-integration/
+    ├── SKILL.md
+    ├── REFERENCE.md
+    └── EXAMPLES.md
+```
