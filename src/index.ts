@@ -6,7 +6,8 @@ import { logRoutes } from './routes/logs.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { internalRoutes } from './routes/internal.js';
 import { sandboxRoutes } from './routes/sandbox.js';
-import './workers/event-processor.worker.js';
+// Worker disabled until Redis is configured
+// import './workers/event-processor.worker.js';
 
 const PORT = parseInt(process.env.PORT || '3000');
 const HOST = process.env.HOST || '0.0.0.0';
