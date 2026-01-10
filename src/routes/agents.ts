@@ -1,11 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { AgentService } from '../services/agent.service.js';
-import { SandboxService } from '../services/sandbox.service.js';
 import { CreateAgentRequest, UpdateAgentRequest } from '../shared-types/index.js';
 import { authMiddleware } from '../middleware/auth.js';
 
 const agentService = new AgentService();
-const sandboxService = new SandboxService();
 
 export async function agentRoutes(fastify: FastifyInstance) {
   // All routes require authentication
@@ -78,31 +76,7 @@ export async function agentRoutes(fastify: FastifyInstance) {
     return reply.code(204).send();
   });
 
-  // Deploy agent
-  fastify.post<{ Params: { id: string } }>('/api/agents/:id/deploy', async (request, reply) => {
-    try {
-      const deployment = await sandboxService.deploy(request.params.id, request.user!.id);
-      return reply.send(deployment);
-    } catch (error: any) {
-      return reply.code(500).send({
-        error: 'DeploymentError',
-        message: error.message,
-      });
-    }
-  });
-
-  // Stop agent
-  fastify.post<{ Params: { id: string } }>('/api/agents/:id/stop', async (request, reply) => {
-    try {
-      await sandboxService.stop(request.params.id, request.user!.id);
-      return reply.code(204).send();
-    } catch (error: any) {
-      return reply.code(500).send({
-        error: 'StopError',
-        message: error.message,
-      });
-    }
-  });
+  // NOTE: Deploy, execute, stop, and other sandbox routes are in sandbox.ts
 
   // Get agent metrics
   fastify.get<{ Params: { id: string } }>('/api/agents/:id/metrics', async (request, reply) => {
