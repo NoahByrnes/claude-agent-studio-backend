@@ -58,6 +58,60 @@ export const agentEvents = pgTable('agent_events', {
   created_at: timestamp('created_at').notNull().defaultNow(),
 });
 
+// Orchestration Status Enum
+export const orchestrationStatusEnum = pgEnum('orchestration_status', [
+  'pending',
+  'triaging',
+  'spawning',
+  'running',
+  'validating',
+  'retrying',
+  'finalizing',
+  'completed',
+  'failed',
+  'escalated',
+]);
+
+// Orchestrations Table (conductor tracking)
+export const orchestrations = pgTable('orchestrations', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  event_id: uuid('event_id').notNull(),
+  status: orchestrationStatusEnum('status').notNull().default('pending'),
+  current_task_id: uuid('current_task_id'),
+  current_worker_id: uuid('current_worker_id'),
+  triage_decision: jsonb('triage_decision'),
+  validation_result: jsonb('validation_result'),
+  final_result: jsonb('final_result'),
+  attempts: jsonb('attempts').notNull().default([]),
+  created_at: timestamp('created_at').notNull().defaultNow(),
+  updated_at: timestamp('updated_at').notNull().defaultNow(),
+  completed_at: timestamp('completed_at'),
+});
+
+// Tasks Table (worker tasks)
+export const tasks = pgTable('tasks', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  orchestration_id: uuid('orchestration_id').notNull().references(() => orchestrations.id, { onDelete: 'cascade' }),
+  event_id: uuid('event_id').notNull(),
+  description: text('description').notNull(),
+  instructions: text('instructions').notNull(),
+  context: jsonb('context').notNull(),
+  constraints: jsonb('constraints').notNull(),
+  created_at: timestamp('created_at').notNull().defaultNow(),
+});
+
+// Workers Table (worker instances)
+export const workers = pgTable('workers', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  task_id: uuid('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  sandbox_id: varchar('sandbox_id', { length: 255 }).notNull(),
+  status: varchar('status', { length: 50 }).notNull().default('initializing'),
+  result: jsonb('result'),
+  error: text('error'),
+  started_at: timestamp('started_at').notNull().defaultNow(),
+  ended_at: timestamp('ended_at'),
+});
+
 // Type exports
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
@@ -73,3 +127,12 @@ export type NewMCPConnector = typeof mcpConnectors.$inferInsert;
 
 export type AgentEvent = typeof agentEvents.$inferSelect;
 export type NewAgentEvent = typeof agentEvents.$inferInsert;
+
+export type Orchestration = typeof orchestrations.$inferSelect;
+export type NewOrchestration = typeof orchestrations.$inferInsert;
+
+export type Task = typeof tasks.$inferSelect;
+export type NewTask = typeof tasks.$inferInsert;
+
+export type Worker = typeof workers.$inferSelect;
+export type NewWorker = typeof workers.$inferInsert;
