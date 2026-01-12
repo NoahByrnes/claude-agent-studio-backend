@@ -116,6 +116,11 @@ export class ConductorE2BService {
 
       } catch (error) {
         lastError = error as Error;
+        console.error(`❌ CONDUCTOR INIT FAILED - Attempt ${attempt}/${maxRetries}`);
+        console.error(`   Error type: ${error instanceof Error ? error.constructor.name : typeof error}`);
+        console.error(`   Error message: ${lastError.message}`);
+        console.error(`   Error stack:`, lastError.stack);
+        console.error(`   Full error object:`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
         console.warn(`⚠️  Attempt ${attempt}/${maxRetries} failed:`, lastError.message);
 
         // If we have more retries, wait before trying again
