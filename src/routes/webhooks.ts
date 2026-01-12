@@ -22,8 +22,19 @@ export function getConductorService(): ConductorE2BService | null {
 }
 
 async function initConductor() {
-  if (conductorService && conductorService.isInitialized()) {
-    return conductorService;
+  // Check if we already have a conductor
+  if (conductorService) {
+    const isInit = conductorService.isInitialized();
+    console.log(`🔍 Existing conductor found. Initialized: ${isInit}`);
+
+    if (isInit) {
+      console.log('♻️  Reusing existing E2B conductor sandbox');
+      return conductorService;
+    } else {
+      console.log('⚠️  Conductor exists but not initialized, creating new one');
+    }
+  } else {
+    console.log('🆕 No existing conductor, creating first one');
   }
 
   const e2bApiKey = process.env.E2B_API_KEY;
