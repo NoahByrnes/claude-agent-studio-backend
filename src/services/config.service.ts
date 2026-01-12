@@ -6,9 +6,9 @@
  */
 
 import crypto from 'crypto';
-
-// In-memory storage for MVP (replace with Supabase later)
-const configs: Map<string, any> = new Map();
+import { eq, and } from 'drizzle-orm';
+import { db } from '../lib/db.js';
+import { connectorConfigs } from '../../db/schema.js';
 
 // Encryption key (should be in env var for production)
 const ENCRYPTION_KEY = process.env.CONFIG_ENCRYPTION_KEY || 'default-key-change-in-production-32b';
@@ -67,15 +67,32 @@ export async function saveConnectorConfig(
     }
   }
 
-  const config: ConnectorConfig = {
-    type,
-    enabled: true,
-    settings: encryptedSettings,
-    updatedAt: new Date(),
-  };
+  // Check if config already exists
+  const existing = await db
+    .select()
+    .from(connectorConfigs)
+    .where(and(eq(connectorConfigs.user_id, userId), eq(connectorConfigs.connector_type, type)))
+    .limit(1);
 
-  // Store in memory (replace with database)
-  configs.set(`${userId}:${type}`, config);
+  if (existing.length > 0) {
+    // Update existing config
+    await db
+      .update(connectorConfigs)
+      .set({
+        settings: encryptedSettings,
+        enabled: 'true',
+        updated_at: new Date(),
+      })
+      .where(and(eq(connectorConfigs.user_id, userId), eq(connectorConfigs.connector_type, type)));
+  } else {
+    // Insert new config
+    await db.insert(connectorConfigs).values({
+      user_id: userId,
+      connector_type: type,
+      settings: encryptedSettings,
+      enabled: 'true',
+    });
+  }
 
   console.log(`✅ Saved ${type} connector config for user ${userId}`);
 }
@@ -87,17 +104,23 @@ export async function getConnectorConfig(
   userId: string,
   type: 'email' | 'sms'
 ): Promise<ConnectorConfig | null> {
-  const config = configs.get(`${userId}:${type}`);
+  const result = await db
+    .select()
+    .from(connectorConfigs)
+    .where(and(eq(connectorConfigs.user_id, userId), eq(connectorConfigs.connector_type, type)))
+    .limit(1);
 
-  if (!config) {
+  if (result.length === 0) {
     return null;
   }
+
+  const config = result[0];
 
   // Decrypt sensitive fields
   const decryptedSettings: Record<string, any> = {};
   const sensitiveFields = ['apiKey', 'authToken', 'accountSid'];
 
-  for (const [key, value] of Object.entries(config.settings)) {
+  for (const [key, value] of Object.entries(config.settings as Record<string, any>)) {
     if (sensitiveFields.includes(key) && typeof value === 'string') {
       try {
         decryptedSettings[key] = decrypt(value);
@@ -111,8 +134,10 @@ export async function getConnectorConfig(
   }
 
   return {
-    ...config,
+    type: config.connector_type,
+    enabled: config.enabled === 'true',
     settings: decryptedSettings,
+    updatedAt: config.updated_at,
   };
 }
 
@@ -130,11 +155,11 @@ export async function getAllConnectorConfigs(
 /**
  * Delete connector configuration
  */
-export async function deleteConnectorConfig(
-  userId: string,
-  type: 'email' | 'sms'
-): Promise<void> {
-  configs.delete(`${userId}:${type}`);
+export async function deleteConnectorConfig(userId: string, type: 'email' | 'sms'): Promise<void> {
+  await db
+    .delete(connectorConfigs)
+    .where(and(eq(connectorConfigs.user_id, userId), eq(connectorConfigs.connector_type, type)));
+
   console.log(`✅ Deleted ${type} connector config for user ${userId}`);
 }
 

@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 
 // Enums
 export const agentStatusEnum = pgEnum('agent_status', ['idle', 'running', 'stopped', 'error', 'deploying']);
+export const connectorTypeEnum = pgEnum('connector_type', ['email', 'sms']);
 
 // Agents Table
 export const agents = pgTable('agents', {
@@ -58,6 +59,17 @@ export const agentEvents = pgTable('agent_events', {
   created_at: timestamp('created_at').notNull().defaultNow(),
 });
 
+// Connector Configs Table (for email/SMS connector settings)
+export const connectorConfigs = pgTable('connector_configs', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  user_id: varchar('user_id', { length: 255 }).notNull(), // Supabase user ID or 'default-user' for MVP
+  connector_type: connectorTypeEnum('connector_type').notNull(),
+  settings: jsonb('settings').notNull(), // Encrypted credentials
+  enabled: text('enabled').notNull().default('true'), // Using text to store 'true'/'false'
+  created_at: timestamp('created_at').notNull().defaultNow(),
+  updated_at: timestamp('updated_at').notNull().defaultNow(),
+});
+
 // Type exports
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
@@ -73,3 +85,6 @@ export type NewMCPConnector = typeof mcpConnectors.$inferInsert;
 
 export type AgentEvent = typeof agentEvents.$inferSelect;
 export type NewAgentEvent = typeof agentEvents.$inferInsert;
+
+export type ConnectorConfig = typeof connectorConfigs.$inferSelect;
+export type NewConnectorConfig = typeof connectorConfigs.$inferInsert;
