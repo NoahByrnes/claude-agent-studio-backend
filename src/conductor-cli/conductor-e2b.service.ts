@@ -209,7 +209,8 @@ When you output "SPAWN_WORKER: <task>", the system:
 **SEND_EMAIL: <to> | <subject> | <body>** - Sends real email
 **SEND_SMS: <to> | <message>** - Sends real SMS
 **DELIVER_FILE: <to> | <file-paths> | <subject> | <message>** - Extracts files from worker sandbox and emails them
-**KILL_WORKER: <worker-id>** - Terminates worker
+**KILL_WORKER: <worker-id>** - Terminates specific worker (use the ID from [WORKER:id] tags)
+**KILL_WORKER: *** - Terminates ALL active workers (use when done with all tasks)
 
 Example DELIVER_FILE usage:
 DELIVER_FILE: user@example.com | /tmp/report.pdf, /tmp/data.csv | Analysis Complete | Here are the files you requested
@@ -236,18 +237,20 @@ Example Flow:
 
 You: "SPAWN_WORKER: Access sales database, analyze Q4 2024 data, calculate key metrics (revenue, growth, top products), generate summary report"
 
-[WORKER:w1] "Found Q4 data. Should I include international sales or just domestic?"
+[WORKER:abc123] "Found Q4 data. Should I include international sales or just domestic?"
 
 You: "Include both, with a breakdown by region"
 
-[WORKER:w1] "Analysis complete: Total $2.4M (+15% vs Q3), top product is Widget A ($800K). Report saved to /tmp/q4-report.md"
+[WORKER:abc123] "Analysis complete: Total $2.4M (+15% vs Q3), top product is Widget A ($800K). Report saved to /tmp/q4-report.md"
 
 You: [review the report] "Good work. Add a forecast section for Q1 2025 based on trends"
 
-[WORKER:w1] "Updated report with Q1 forecast: projected $2.7M based on 12% growth trend"
+[WORKER:abc123] "Updated report with Q1 forecast: projected $2.7M based on 12% growth trend"
 
 You: "SEND_EMAIL: client@example.com | Q4 Sales Analysis | [report content from /tmp/q4-report.md]"
-You: "KILL_WORKER: w1"
+You: "KILL_WORKER: abc123"   ← Use the actual worker ID from [WORKER:abc123]
+
+**IMPORTANT: Always kill workers when done to save costs. Use KILL_WORKER: * to kill all active workers.**
 
 **You're orchestrating AND mentoring Claude workers.** Answer their questions, vet their work, iterate until quality is right.`;
   }
@@ -342,7 +345,7 @@ You: "KILL_WORKER: w1"
 
     console.log(`🔨 Spawning worker for task: ${task.substring(0, 100)}...`);
 
-    // Create E2B sandbox for worker (short-lived)
+    // Create E2B sandbox for worker (lives until explicitly killed)
     const sandbox = await Sandbox.create(this.config.e2bTemplateId, {
       apiKey: this.config.e2bApiKey,
       metadata: {
@@ -350,8 +353,9 @@ You: "KILL_WORKER: w1"
         conductorId: this.conductorSession.id,
         type: 'cli-session',
       },
-      // Workers live for 30 minutes max
-      timeoutMs: 30 * 60 * 1000,
+      // No auto-timeout - conductor controls worker lifecycle
+      // Workers run until explicitly killed with KILL_WORKER command
+      timeoutMs: 0,
       // Allow 5 minutes for sandbox creation
       requestTimeoutMs: 300000,
     });
@@ -445,14 +449,20 @@ Begin working on the task now.`;
       const commands = this.parseCommands(conductorResponse.result);
 
       // Check if conductor wants to end conversation with this worker
-      const hasKillWorker = commands.some(cmd => cmd.type === 'kill-worker' && cmd.payload?.workerId === workerId);
+      const hasKillWorker = commands.some(cmd => cmd.type === 'kill-worker');
       const hasEmailOrSms = commands.some(cmd => cmd.type === 'send-email' || cmd.type === 'send-sms');
 
       if (hasKillWorker || hasEmailOrSms) {
         console.log(`   ✅ Conductor finished with worker ${workerId.substring(0, 8)}`);
         conversationActive = false;
-        // Execute any final commands (like SEND_EMAIL)
+        // Execute any final commands (like SEND_EMAIL, KILL_WORKER)
         await this.executeCommands(commands);
+
+        // Safety: If conductor sent final reply but didn't kill this specific worker, kill it now
+        if (hasEmailOrSms && !commands.some(cmd => cmd.type === 'kill-worker' && cmd.payload?.workerId === workerId)) {
+          console.log(`   🧹 Auto-cleanup: Killing worker ${workerId.substring(0, 8)} (conductor sent final reply)`);
+          await this.killWorker(workerId);
+        }
         break;
       }
 
@@ -569,10 +579,22 @@ Begin working on the task now.`;
         }
       }
 
-      // KILL_WORKER: <worker-id>
+      // KILL_WORKER: <worker-id> or KILL_WORKER: * (kill all)
       if (trimmed.startsWith('KILL_WORKER:')) {
         const workerId = trimmed.slice('KILL_WORKER:'.length).trim();
-        commands.push({ type: 'kill-worker', payload: { workerId } });
+
+        // Support wildcard * to kill all workers
+        if (workerId === '*' || workerId === 'all') {
+          const activeWorkerIds = this.getActiveWorkers().map(w => w.id);
+          console.log(`📋 KILL_WORKER wildcard detected, killing ${activeWorkerIds.length} workers`);
+          for (const id of activeWorkerIds) {
+            commands.push({ type: 'kill-worker', payload: { workerId: id } });
+          }
+        } else if (workerId) {
+          commands.push({ type: 'kill-worker', payload: { workerId } });
+        } else {
+          console.warn('⚠️  KILL_WORKER command with empty worker ID - ignoring');
+        }
       }
     }
 
