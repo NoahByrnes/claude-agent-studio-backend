@@ -271,7 +271,10 @@ You: "KILL_WORKER: w1"
     const response = await this.conductorSandbox.executor.sendToSession(
       this.conductorSession.id,
       formattedMessage,
-      { skipPermissions: true } // Conductor runs autonomously
+      {
+        skipPermissions: true, // Conductor runs autonomously
+        timeout: 300000 // 5 minutes for conductor thinking/planning
+      }
     );
 
     this.conductorSession.lastActivityAt = new Date();
@@ -385,6 +388,7 @@ Begin working on the task now.`;
     const initialResponse = await executor.execute(workerPrompt, {
       outputFormat: 'json',
       skipPermissions: true, // Workers run autonomously without permission prompts
+      timeout: 600000, // 10 minutes for complex tasks like research, web browsing
     });
     const workerId = initialResponse.session_id;
 
@@ -431,7 +435,8 @@ Begin working on the task now.`;
       // Send worker's response to conductor
       const conductorResponse = await this.conductorSandbox!.executor.sendToSession(
         this.conductorSession!.id,
-        workerMessage
+        workerMessage,
+        { timeout: 300000 } // 5 minutes for conductor thinking/planning
       );
 
       console.log(`   📤 Conductor response: ${conductorResponse.result.substring(0, 150)}...`);
@@ -462,7 +467,10 @@ Begin working on the task now.`;
           currentWorkerResponse = await sandboxInfo.executor.sendToSession(
             workerId,
             conductorResponse.result,
-            { skipPermissions: true } // Workers run autonomously
+            {
+              skipPermissions: true, // Workers run autonomously
+              timeout: 600000 // 10 minutes for worker tasks
+            }
           );
         } else {
           console.log(`   ⚠️  Worker ${workerId} not found, ending conversation`);

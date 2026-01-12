@@ -32,10 +32,14 @@ export class E2BCLIExecutor {
     const args = this.buildArgs(prompt, { ...options, outputFormat: 'json' });
     const command = `claude ${args.join(' ')}`;
 
+    // Default timeout: 10 minutes for workers doing research/complex tasks
+    const timeout = options.timeout || 600000;
+
     const result = await this.sandbox.commands.run(command, {
       envs: {
         ANTHROPIC_API_KEY: this.apiKey,
       },
+      timeoutMs: timeout,
     });
 
     if (result.exitCode !== 0) {
@@ -71,12 +75,16 @@ export class E2BCLIExecutor {
     const args = this.buildArgs(prompt, { ...options, outputFormat: 'stream-json' });
     const command = `claude ${args.join(' ')}`;
 
+    // Default timeout: 10 minutes for workers doing research/complex tasks
+    const timeout = options.timeout || 600000;
+
     // Start command in background
     const handle = await this.sandbox.commands.run(command, {
       background: true,
       envs: {
         ANTHROPIC_API_KEY: this.apiKey,
       },
+      timeoutMs: timeout,
     });
 
     // Wait for completion
