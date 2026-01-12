@@ -434,10 +434,10 @@ You: "KILL_WORKER: abc123"   ← Use the actual worker ID from [WORKER:abc123]
             conductorId: this.conductorSession.id,
             type: 'cli-session',
           },
-          // Workers can run for 2 hours max (longer than conductor for complex tasks)
+          // Workers can run for 1 hour max (same as conductor - E2B Hobby tier limit)
           // Conductor should kill them earlier with KILL_WORKER when done
-          // Note: E2B doesn't support timeoutMs: 0, needs explicit value
-          timeoutMs: 2 * 60 * 60 * 1000, // 2 hours
+          // Note: E2B Hobby tier max is 1 hour, Pro tier max is 24 hours
+          timeoutMs: 60 * 60 * 1000, // 1 hour (3,600,000ms)
           // Allow 5 minutes for sandbox creation (same as conductor)
           requestTimeoutMs: 300000,
         });
