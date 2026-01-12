@@ -5,7 +5,7 @@
  * Adapted from original CLI executor to work with E2B infrastructure.
  */
 
-import { Sandbox } from '@e2b/sdk';
+import { Sandbox } from 'e2b';
 import type { CLIResponse, CLIStreamMessage } from './types.js';
 
 export interface ExecuteOptions {
@@ -13,13 +13,16 @@ export interface ExecuteOptions {
   outputFormat?: 'json' | 'stream-json' | 'text';
   timeout?: number;          // ms
   appendSystemPrompt?: string;
+  skipPermissions?: boolean; // Skip permission checks (for autonomous workers in sandboxes)
 }
 
 export class E2BCLIExecutor {
   private sandbox: Sandbox;
+  private apiKey: string;
 
-  constructor(sandbox: Sandbox) {
+  constructor(sandbox: Sandbox, apiKey?: string) {
     this.sandbox = sandbox;
+    this.apiKey = apiKey || process.env.ANTHROPIC_API_KEY || '';
   }
 
   /**
@@ -29,9 +32,10 @@ export class E2BCLIExecutor {
     const args = this.buildArgs(prompt, { ...options, outputFormat: 'json' });
     const command = `claude ${args.join(' ')}`;
 
-    const result = await this.sandbox.process.startAndWait({
-      cmd: command,
-      timeout: options.timeout || 300000, // 5 minutes default
+    const result = await this.sandbox.commands.run(command, {
+      envs: {
+        ANTHROPIC_API_KEY: this.apiKey,
+      },
     });
 
     if (result.exitCode !== 0) {
@@ -67,14 +71,16 @@ export class E2BCLIExecutor {
     const args = this.buildArgs(prompt, { ...options, outputFormat: 'stream-json' });
     const command = `claude ${args.join(' ')}`;
 
-    // Start process (won't block)
-    const proc = await this.sandbox.process.start({
-      cmd: command,
+    // Start command in background
+    const handle = await this.sandbox.commands.run(command, {
+      background: true,
+      envs: {
+        ANTHROPIC_API_KEY: this.apiKey,
+      },
     });
 
-    // For now, wait and parse output
-    // TODO: Implement true streaming via E2B WebSocket
-    const result = await proc.wait();
+    // Wait for completion
+    const result = await handle.wait();
 
     if (result.exitCode !== 0) {
       throw new Error(`CLI command failed: ${result.stderr}`);
@@ -117,6 +123,11 @@ export class E2BCLIExecutor {
    */
   private buildArgs(prompt: string, options: ExecuteOptions): string[] {
     const args: string[] = ['-p']; // Print mode (non-interactive)
+
+    // Skip permissions for autonomous workers in sandboxes
+    if (options.skipPermissions) {
+      args.push('--dangerously-skip-permissions');
+    }
 
     // Resume session if specified
     if (options.sessionId) {

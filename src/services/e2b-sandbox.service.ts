@@ -1,4 +1,4 @@
-import { Sandbox } from '@e2b/sdk';
+import { Sandbox } from 'e2b';
 import type { Agent } from '../../db/schema.js';
 import { AgentService } from './agent.service.js';
 
@@ -64,8 +64,7 @@ export class E2BSandboxService {
 
     try {
       // Create E2B sandbox from template
-      const sandbox = await Sandbox.create({
-        template: this.templateId,
+      const sandbox = await Sandbox.create(this.templateId, {
         apiKey: this.apiKey,
         metadata: {
           agentId,
@@ -73,10 +72,12 @@ export class E2BSandboxService {
           deployedAt: new Date().toISOString(),
         },
         // 30 minute timeout
-        timeout: 1800000,
+        timeoutMs: 1800000,
+        // 5 minute timeout for sandbox creation
+        requestTimeoutMs: 300000,
       });
 
-      console.log(`✅ E2B sandbox created: ${sandbox.id}`);
+      console.log(`✅ E2B sandbox created: ${sandbox.sandboxId}`);
 
       // Wait for HTTP server to be ready (port 8080)
       console.log(`   Waiting for HTTP server on port 8080...`);
@@ -84,7 +85,7 @@ export class E2BSandboxService {
 
       const deployment: E2BSandboxDeployment = {
         id: `e2b-${agentId}`,
-        sandboxId: sandbox.id,
+        sandboxId: sandbox.sandboxId,
         agentId,
         status: 'ready',
         createdAt: new Date(),
@@ -96,8 +97,8 @@ export class E2BSandboxService {
       await this.agentService.updateStatus(agentId, userId, 'running');
 
       console.log(`✅ Agent ${agentId} deployed successfully`);
-      console.log(`   Sandbox ID: ${sandbox.id}`);
-      console.log(`   HTTP endpoint: http://${sandbox.getHostname(8080)}`);
+      console.log(`   Sandbox ID: ${sandbox.sandboxId}`);
+      console.log(`   HTTP endpoint: http://${sandbox.getHost(8080)}`);
 
       return deployment;
     } catch (error: any) {
@@ -120,9 +121,7 @@ export class E2BSandboxService {
     while (Date.now() - startTime < timeoutMs) {
       try {
         // Try to connect to the port using curl
-        const result = await sandbox.process.startAndWait({
-          cmd: `curl -f http://localhost:${port}/health || exit 1`,
-        });
+        const result = await sandbox.commands.run(`curl -f http://localhost:${port}/health || exit 1`);
 
         if (result.exitCode === 0) {
           console.log(`   ✅ Port ${port} is ready`);
@@ -155,7 +154,7 @@ export class E2BSandboxService {
     const { sandbox, deployment } = instance;
 
     console.log(`🤖 Executing prompt in agent ${agentId}...`);
-    console.log(`   Sandbox: ${sandbox.id}`);
+    console.log(`   Sandbox: ${sandbox.sandboxId}`);
     console.log(`   Session: ${sessionId}`);
     console.log(`   Prompt: ${prompt.substring(0, 100)}...`);
 
@@ -163,8 +162,7 @@ export class E2BSandboxService {
       deployment.status = 'running';
 
       // Send HTTP request to container's /execute endpoint
-      const response = await sandbox.process.startAndWait({
-        cmd: `curl -X POST http://localhost:8080/execute \\
+      const response = await sandbox.commands.run(`curl -X POST http://localhost:8080/execute \\
           -H "Content-Type: application/json" \\
           -d '${JSON.stringify({
             agentId,
@@ -175,8 +173,7 @@ export class E2BSandboxService {
               BACKEND_API_URL: process.env.BACKEND_API_URL,
               INTERNAL_API_KEY: process.env.INTERNAL_API_KEY,
             }
-          }).replace(/'/g, "'\"'\"'")}'`,
-      });
+          }).replace(/'/g, "'\"'\"'")}'`);
 
       if (response.exitCode !== 0) {
         throw new Error(`HTTP request failed: ${response.stderr}`);
@@ -206,8 +203,8 @@ export class E2BSandboxService {
       console.log(`🛑 Stopping sandbox for agent ${agentId}...`);
 
       try {
-        await instance.sandbox.close();
-        console.log(`   ✅ Sandbox ${instance.sandbox.id} closed`);
+        await Sandbox.kill(instance.sandbox.sandboxId);
+        console.log(`   ✅ Sandbox ${instance.sandbox.sandboxId} closed`);
       } catch (error: any) {
         console.error(`   ⚠️  Error closing sandbox:`, error.message);
       }
@@ -250,7 +247,7 @@ export class E2BSandboxService {
 
     for (const file of files) {
       try {
-        await instance.sandbox.filesystem.write(file.path, file.content);
+        await instance.sandbox.files.write(file.path, file.content);
         console.log(`   ✅ Uploaded: ${file.path}`);
       } catch (error: any) {
         console.error(`   ❌ Failed to upload ${file.path}:`, error.message);
@@ -273,10 +270,7 @@ export class E2BSandboxService {
     console.log(`📦 Installing packages in sandbox ${agentId}: ${packages.join(', ')}`);
 
     try {
-      const result = await instance.sandbox.process.startAndWait({
-        cmd: `cd /workspace/agent-runtime && npm install ${packages.join(' ')}`,
-        cwd: '/workspace/agent-runtime',
-      });
+      const result = await instance.sandbox.commands.run(`cd /workspace/agent-runtime && npm install ${packages.join(' ')}`);
 
       if (result.exitCode !== 0) {
         throw new Error(`npm install failed: ${result.stderr}`);
@@ -306,10 +300,7 @@ export class E2BSandboxService {
     console.log(`⚙️  Executing command in sandbox ${agentId}: ${command}`);
 
     try {
-      const result = await instance.sandbox.process.startAndWait({
-        cmd: command,
-        timeout: options?.timeout || 60000,
-      });
+      const result = await instance.sandbox.commands.run(command);
 
       return {
         stdout: result.stdout,

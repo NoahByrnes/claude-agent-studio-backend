@@ -5,7 +5,7 @@
  * This replaces the direct Agent SDK approach with the conductor/worker pattern.
  */
 
-import { Sandbox } from '@e2b/sdk';
+import { Sandbox } from 'e2b';
 import { E2BCLIExecutor } from './cli-executor-e2b.js';
 import type {
   ConductorSession,
@@ -52,48 +52,73 @@ export class ConductorE2BService {
 
   /**
    * Initialize the conductor in a long-lived E2B sandbox.
+   * Implements retry logic for E2B infrastructure reliability.
    */
   async initConductor(): Promise<string> {
-    console.log('🎯 Creating conductor E2B sandbox...');
+    const maxRetries = 3;
+    let lastError: Error | undefined;
 
-    // Create E2B sandbox for conductor (long-lived)
-    const sandbox = await Sandbox.create({
-      template: this.config.e2bTemplateId,
-      apiKey: this.config.e2bApiKey,
-      metadata: {
-        role: 'conductor',
-        type: 'cli-session',
-      },
-      // Conductor lives for 12 hours
-      timeout: 12 * 60 * 60 * 1000,
-    });
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🎯 Creating conductor E2B sandbox (attempt ${attempt}/${maxRetries})...`);
 
-    console.log(`✅ Conductor sandbox created: ${sandbox.id}`);
+        // Create E2B sandbox for conductor (long-lived)
+        const sandbox = await Sandbox.create(this.config.e2bTemplateId, {
+          apiKey: this.config.e2bApiKey,
+          metadata: {
+            role: 'conductor',
+            type: 'cli-session',
+          },
+          // Conductor lives for 1 hour (E2B max limit)
+          timeoutMs: 60 * 60 * 1000,
+          // Allow 5 minutes for sandbox creation (template is large with Claude CLI)
+          requestTimeoutMs: 300000,
+        });
 
-    // Wait for Claude CLI to be available
-    await this.waitForCLI(sandbox);
+        console.log(`✅ Conductor sandbox created: ${sandbox.sandboxId}`);
 
-    const executor = new E2BCLIExecutor(sandbox);
+        // Wait for Claude CLI to be available
+        await this.waitForCLI(sandbox);
 
-    // Start conductor CLI session
-    const systemPrompt = this.config.systemPrompt || this.getDefaultConductorPrompt();
-    const cliSessionId = await executor.startSession(systemPrompt);
+        const executor = new E2BCLIExecutor(sandbox);
 
-    this.conductorSession = {
-      id: cliSessionId,
-      role: 'conductor',
-      createdAt: new Date(),
-      lastActivityAt: new Date(),
-      sandboxId: sandbox.id,
-      activeWorkers: [],
-    };
+        // Start conductor CLI session
+        const systemPrompt = this.config.systemPrompt || this.getDefaultConductorPrompt();
+        const cliSessionId = await executor.startSession(systemPrompt);
 
-    this.conductorSandbox = { sandbox, executor };
+        this.conductorSession = {
+          id: cliSessionId,
+          role: 'conductor',
+          createdAt: new Date(),
+          lastActivityAt: new Date(),
+          sandboxId: sandbox.sandboxId,
+          activeWorkers: [],
+        };
 
-    console.log(`✅ Conductor CLI session started: ${cliSessionId}`);
-    console.log(`   Sandbox: ${sandbox.id}`);
+        this.conductorSandbox = { sandbox, executor };
 
-    return cliSessionId;
+        console.log(`✅ Conductor CLI session started: ${cliSessionId}`);
+        console.log(`   Sandbox: ${sandbox.sandboxId}`);
+
+        return cliSessionId;
+
+      } catch (error) {
+        lastError = error as Error;
+        console.warn(`⚠️  Attempt ${attempt}/${maxRetries} failed:`, lastError.message);
+
+        // If we have more retries, wait before trying again
+        if (attempt < maxRetries) {
+          const waitTime = attempt * 5000; // Exponential backoff: 5s, 10s
+          console.log(`   Retrying in ${waitTime / 1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+    }
+
+    // All retries failed
+    throw new Error(
+      `Failed to initialize conductor after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`
+    );
   }
 
   /**
@@ -104,9 +129,7 @@ export class ConductorE2BService {
 
     while (Date.now() - startTime < timeoutMs) {
       try {
-        const result = await sandbox.process.startAndWait({
-          cmd: 'which claude',
-        });
+        const result = await sandbox.commands.run('which claude');
 
         if (result.exitCode === 0) {
           console.log('   ✅ Claude CLI ready');
@@ -126,30 +149,65 @@ export class ConductorE2BService {
    * Get default conductor system prompt.
    */
   private getDefaultConductorPrompt(): string {
-    return `You are a CONDUCTOR agent responsible for managing incoming requests and delegating work.
+    return `You are the CONDUCTOR orchestrating OTHER CLAUDE CODE INSTANCES as autonomous workers.
 
-## Message Format
-You receive messages tagged with their source:
-- [EMAIL] - Incoming emails
+## CRITICAL: You Have NO Direct Tool Access
+You CANNOT write files, run commands, or do any direct work. You ONLY orchestrate workers.
+**ALL work must be delegated to workers via SPAWN_WORKER.**
+
+## What SPAWN_WORKER Really Does
+When you output "SPAWN_WORKER: <task>", the system:
+1. Creates a new E2B sandbox (full Ubuntu 22.04 environment)
+2. Starts a NEW Claude Code CLI session in that sandbox
+3. That Claude worker has FULL tool access:
+   - Bash (full command line access)
+   - Read/Write/Edit (filesystem access)
+   - Glob/Grep (search files)
+   - Playwright for browser automation
+   - Everything needed to complete tasks
+
+## Your Commands (Actually Execute)
+**SPAWN_WORKER: <detailed task>** - Spawns autonomous Claude worker
+**SEND_EMAIL: <to> | <subject> | <body>** - Sends real email
+**SEND_SMS: <to> | <message>** - Sends real SMS
+**KILL_WORKER: <worker-id>** - Terminates worker
+
+## Message Sources
+- [EMAIL] - External emails
 - [SMS] - Text messages
-- [USER] - Web interface prompts
-- [WORKER:id] - Reports from worker agents
+- [USER] - Web dashboard
+- [WORKER:id] - Reports from your Claude workers
 
-## Commands
-Output these commands and they will be executed:
-- SPAWN_WORKER: <task description> - Create a worker to handle a task
-- SEND_EMAIL: <to> | <subject> | <body> - Send an email response
-- SEND_SMS: <to> | <message> - Send an SMS
-- KILL_WORKER: <worker-id> - Terminate a worker
+## How To Orchestrate
+**ALWAYS delegate work to workers - even simple tasks.** You'll have a conversation with them:
 
-## Workflow
-1. Receive message → Decide if action needed
-2. If complex task → SPAWN_WORKER with clear instructions
-3. When worker reports → Validate the work
-4. If satisfactory → Send response via SEND_EMAIL/SEND_SMS
-5. Cleanup → KILL_WORKER
+1. **Spawn**: "SPAWN_WORKER: <detailed instructions>"
+2. **Worker may ask questions**: [WORKER:abc123] "Should I use CSV or JSON format?"
+3. **You answer**: "Use JSON format for better structure"
+4. **Worker submits work**: [WORKER:abc123] "Analysis complete. Results in /tmp/report.json"
+5. **You vet the work**: Review their output. If not satisfactory, tell them what to fix
+6. **Iterate until satisfied**, then send final response to client
+7. **Clean up**: "KILL_WORKER: abc123"
 
-Acknowledge your role briefly and wait for messages.`;
+Example Flow:
+[EMAIL] "Analyze Q4 sales and send report"
+
+You: "SPAWN_WORKER: Access sales database, analyze Q4 2024 data, calculate key metrics (revenue, growth, top products), generate summary report"
+
+[WORKER:w1] "Found Q4 data. Should I include international sales or just domestic?"
+
+You: "Include both, with a breakdown by region"
+
+[WORKER:w1] "Analysis complete: Total $2.4M (+15% vs Q3), top product is Widget A ($800K). Report saved to /tmp/q4-report.md"
+
+You: [review the report] "Good work. Add a forecast section for Q1 2025 based on trends"
+
+[WORKER:w1] "Updated report with Q1 forecast: projected $2.7M based on 12% growth trend"
+
+You: "SEND_EMAIL: client@example.com | Q4 Sales Analysis | [report content from /tmp/q4-report.md]"
+You: "KILL_WORKER: w1"
+
+**You're orchestrating AND mentoring Claude workers.** Answer their questions, vet their work, iterate until quality is right.`;
   }
 
   // ============================================================================
@@ -198,7 +256,7 @@ Acknowledge your role briefly and wait for messages.`;
   // ============================================================================
 
   /**
-   * Spawn a new worker in a dedicated E2B sandbox.
+   * Spawn a new worker in a dedicated E2B sandbox and manage conversation.
    */
   async spawnWorker(task: string): Promise<string> {
     if (!this.conductorSession) {
@@ -208,8 +266,7 @@ Acknowledge your role briefly and wait for messages.`;
     console.log(`🔨 Spawning worker for task: ${task.substring(0, 100)}...`);
 
     // Create E2B sandbox for worker (short-lived)
-    const sandbox = await Sandbox.create({
-      template: this.config.e2bTemplateId,
+    const sandbox = await Sandbox.create(this.config.e2bTemplateId, {
       apiKey: this.config.e2bApiKey,
       metadata: {
         role: 'worker',
@@ -217,31 +274,47 @@ Acknowledge your role briefly and wait for messages.`;
         type: 'cli-session',
       },
       // Workers live for 30 minutes max
-      timeout: 30 * 60 * 1000,
+      timeoutMs: 30 * 60 * 1000,
+      // Allow 5 minutes for sandbox creation
+      requestTimeoutMs: 300000,
     });
 
-    console.log(`   ✅ Worker sandbox created: ${sandbox.id}`);
+    console.log(`   ✅ Worker sandbox created: ${sandbox.sandboxId}`);
 
     // Wait for CLI
     await this.waitForCLI(sandbox);
 
-    const executor = new E2BCLIExecutor(sandbox);
+    const executor = new E2BCLIExecutor(sandbox, process.env.ANTHROPIC_API_KEY);
 
-    // Start worker CLI session
-    const workerPrompt = `You are a WORKER agent. Complete the following task thoroughly.
+    // Start worker CLI session with initial task
+    const workerPrompt = `You are an autonomous WORKER agent. A conductor has delegated a task to you.
 
-## Task
+## Your Task
 ${task}
 
-## Reporting
-When done, output: TASK_COMPLETE: <summary of what you did>
-If blocked, output: TASK_BLOCKED: <what's preventing progress>
-For progress updates: TASK_PROGRESS: <current status>
+## Your Capabilities
+You have full access to:
+- Bash (run any commands, install packages, execute scripts)
+- File system (Read, Write, Edit, Glob, Grep)
+- Browser automation (Playwright if needed)
+- Any tools installed in this Ubuntu environment
 
-Start working on the task now.`;
+## How to Work
+1. Complete the task thoroughly using all available tools
+2. When done, provide a complete summary of what you did
+3. If you need clarification or are blocked, ask clearly
+4. The conductor will review your work and may ask for changes
 
-    const response = await executor.startSession(workerPrompt);
-    const workerId = response; // CLI session ID
+Begin working on the task now.`;
+
+    console.log(`   📤 Sending initial task to worker...`);
+    const initialResponse = await executor.execute(workerPrompt, {
+      outputFormat: 'json',
+      skipPermissions: true, // Workers run autonomously without permission prompts
+    });
+    const workerId = initialResponse.session_id;
+
+    console.log(`   ✅ Worker ${workerId} started, received initial response`);
 
     const workerSession: WorkerSession = {
       id: workerId,
@@ -251,7 +324,7 @@ Start working on the task now.`;
       status: 'running',
       createdAt: new Date(),
       lastActivityAt: new Date(),
-      sandboxId: sandbox.id,
+      sandboxId: sandbox.sandboxId,
     };
 
     this.workerSessions.set(workerId, workerSession);
@@ -259,9 +332,77 @@ Start working on the task now.`;
     this.conductorSession.activeWorkers.push(workerId);
 
     this.events.onWorkerSpawned?.(workerId, task);
-    console.log(`✅ Worker spawned: ${workerId} in sandbox ${sandbox.id}`);
+    console.log(`✅ Worker spawned: ${workerId} in sandbox ${sandbox.sandboxId}`);
+
+    // Start the conductor-worker conversation loop
+    await this.manageWorkerConversation(workerId, initialResponse);
 
     return workerId;
+  }
+
+  /**
+   * Manage ongoing conversation between conductor and worker.
+   */
+  private async manageWorkerConversation(workerId: string, workerResponse: CLIResponse): Promise<void> {
+    console.log(`💬 Starting conversation loop: Conductor ↔ Worker ${workerId.substring(0, 8)}`);
+
+    let currentWorkerResponse = workerResponse;
+    let conversationActive = true;
+
+    while (conversationActive) {
+      // Format worker's message for conductor
+      const workerMessage = `[WORKER:${workerId}]\n${currentWorkerResponse.result}`;
+      console.log(`   📥 Worker → Conductor: ${currentWorkerResponse.result.substring(0, 150)}...`);
+
+      // Send worker's response to conductor
+      const conductorResponse = await this.conductorSandbox!.executor.sendToSession(
+        this.conductorSession!.id,
+        workerMessage
+      );
+
+      console.log(`   📤 Conductor response: ${conductorResponse.result.substring(0, 150)}...`);
+
+      // Parse conductor's response for commands
+      const commands = this.parseCommands(conductorResponse.result);
+
+      // Check if conductor wants to end conversation with this worker
+      const hasKillWorker = commands.some(cmd => cmd.type === 'kill-worker' && cmd.payload?.workerId === workerId);
+      const hasEmailOrSms = commands.some(cmd => cmd.type === 'send-email' || cmd.type === 'send-sms');
+
+      if (hasKillWorker || hasEmailOrSms) {
+        console.log(`   ✅ Conductor finished with worker ${workerId.substring(0, 8)}`);
+        conversationActive = false;
+        // Execute any final commands (like SEND_EMAIL)
+        await this.executeCommands(commands);
+        break;
+      }
+
+      // Check if conductor is addressing the worker (continuing conversation)
+      // If the response doesn't contain commands, it's a message for the worker
+      if (commands.length === 0 || !commands.some(cmd => cmd.type === 'spawn-worker')) {
+        // Send conductor's message to worker
+        console.log(`   📤 Conductor → Worker: ${conductorResponse.result.substring(0, 100)}...`);
+
+        const sandboxInfo = this.workerSandboxes.get(workerId);
+        if (sandboxInfo) {
+          currentWorkerResponse = await sandboxInfo.executor.sendToSession(
+            workerId,
+            conductorResponse.result,
+            { skipPermissions: true } // Workers run autonomously
+          );
+        } else {
+          console.log(`   ⚠️  Worker ${workerId} not found, ending conversation`);
+          conversationActive = false;
+        }
+      } else {
+        // Conductor issued new commands, conversation with this worker is done
+        console.log(`   ✅ Conductor issued new commands, ending conversation with worker`);
+        conversationActive = false;
+        await this.executeCommands(commands);
+      }
+    }
+
+    console.log(`✅ Conversation ended: Conductor ↔ Worker ${workerId.substring(0, 8)}`);
   }
 
   /**
@@ -277,8 +418,8 @@ Start working on the task now.`;
 
     // Close E2B sandbox
     try {
-      await sandboxInfo.sandbox.close();
-      console.log(`   ✅ Worker sandbox closed: ${sandboxInfo.sandbox.id}`);
+      await Sandbox.kill(sandboxInfo.sandbox.sandboxId);
+      console.log(`   ✅ Worker sandbox closed: ${sandboxInfo.sandbox.sandboxId}`);
     } catch (error: any) {
       console.error(`   ⚠️  Error closing worker sandbox:`, error.message);
     }
@@ -307,7 +448,8 @@ Start working on the task now.`;
     const lines = output.split('\n');
 
     for (const line of lines) {
-      const trimmed = line.trim();
+      // Remove markdown formatting (**, *, etc.) and trim
+      const trimmed = line.replace(/\*\*/g, '').replace(/\*/g, '').trim();
 
       // SPAWN_WORKER: <task>
       if (trimmed.startsWith('SPAWN_WORKER:')) {
@@ -404,8 +546,8 @@ Start working on the task now.`;
     // Close all worker sandboxes
     for (const [workerId, sandboxInfo] of this.workerSandboxes.entries()) {
       try {
-        await sandboxInfo.sandbox.close();
-        console.log(`   ✅ Closed worker sandbox: ${sandboxInfo.sandbox.id}`);
+        await Sandbox.kill(sandboxInfo.sandbox.sandboxId);
+        console.log(`   ✅ Closed worker sandbox: ${sandboxInfo.sandbox.sandboxId}`);
       } catch (error: any) {
         console.error(`   ⚠️  Error closing worker ${workerId}:`, error.message);
       }
@@ -414,8 +556,8 @@ Start working on the task now.`;
     // Close conductor sandbox
     if (this.conductorSandbox) {
       try {
-        await this.conductorSandbox.sandbox.close();
-        console.log(`   ✅ Closed conductor sandbox: ${this.conductorSandbox.sandbox.id}`);
+        await Sandbox.kill(this.conductorSandbox.sandbox.sandboxId);
+        console.log(`   ✅ Closed conductor sandbox: ${this.conductorSandbox.sandbox.sandboxId}`);
       } catch (error: any) {
         console.error(`   ⚠️  Error closing conductor:`, error.message);
       }
