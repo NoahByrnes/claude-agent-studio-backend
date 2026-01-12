@@ -36,12 +36,28 @@ export class E2BCLIExecutor {
     // Default timeout: 10 minutes for workers doing research/complex tasks
     const timeout = options.timeout || 600000;
 
-    const result = await this.sandbox.commands.run(command, {
-      envs: {
-        ANTHROPIC_API_KEY: this.apiKey,
-      },
-      timeoutMs: timeout,
-    });
+    let result;
+    try {
+      result = await this.sandbox.commands.run(command, {
+        envs: {
+          ANTHROPIC_API_KEY: this.apiKey,
+        },
+        timeoutMs: timeout,
+      });
+    } catch (error: any) {
+      // E2B throws CommandExitError for non-zero exit codes
+      console.error(`❌ CLI command failed with CommandExitError`);
+      console.error(`   Command: ${command}`);
+      console.error(`   Error:`, error);
+      console.error(`   Error result:`, error.result);
+      if (error.result) {
+        console.error(`   Stderr: ${error.result.stderr || 'none'}`);
+        console.error(`   Stdout: ${error.result.stdout || 'none'}`);
+        console.error(`   Exit code: ${error.result.exitCode || 'unknown'}`);
+        throw new Error(`CLI command failed (exit ${error.result.exitCode}): ${error.result.stderr || error.result.stdout || error.message}`);
+      }
+      throw error;
+    }
 
     if (result.exitCode !== 0) {
       console.error(`❌ CLI command failed with exit code ${result.exitCode}`);
@@ -94,7 +110,23 @@ export class E2BCLIExecutor {
     });
 
     // Wait for completion
-    const result = await handle.wait();
+    let result;
+    try {
+      result = await handle.wait();
+    } catch (error: any) {
+      // E2B throws CommandExitError for non-zero exit codes
+      console.error(`❌ CLI stream command failed with CommandExitError`);
+      console.error(`   Command: ${command}`);
+      console.error(`   Error:`, error);
+      console.error(`   Error result:`, error.result);
+      if (error.result) {
+        console.error(`   Stderr: ${error.result.stderr || 'none'}`);
+        console.error(`   Stdout: ${error.result.stdout || 'none'}`);
+        console.error(`   Exit code: ${error.result.exitCode || 'unknown'}`);
+        throw new Error(`CLI command failed (exit ${error.result.exitCode}): ${error.result.stderr || error.result.stdout || error.message}`);
+      }
+      throw error;
+    }
 
     if (result.exitCode !== 0) {
       console.error(`❌ CLI stream command failed with exit code ${result.exitCode}`);
