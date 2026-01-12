@@ -108,10 +108,29 @@ Subject: ${email.subject}
 ${email.body}`,
       };
 
-      const conductor = await initConductor();
-      const response = await conductor.sendToConductor(message);
+      let conductor = await initConductor();
 
-      return reply.send({ success: true, sessionId: response.session_id });
+      try {
+        const response = await conductor.sendToConductor(message);
+        return reply.send({ success: true, sessionId: response.session_id });
+      } catch (innerError: any) {
+        // Check if E2B sandbox died (expired after 1 hour)
+        if (innerError.message?.includes('Sandbox is probably not running anymore') ||
+            innerError.message?.includes('NotFoundError')) {
+          console.log('🔄 E2B sandbox expired, creating new conductor...');
+
+          // Reset conductor to force recreation
+          conductorService = null;
+
+          // Create fresh conductor and retry
+          conductor = await initConductor();
+          const response = await conductor.sendToConductor(message);
+          return reply.send({ success: true, sessionId: response.session_id });
+        }
+
+        // Re-throw if it's a different error
+        throw innerError;
+      }
     } catch (error: any) {
       console.error('❌ Email webhook error:', error);
       return reply.code(500).send({ error: error.message });
@@ -136,10 +155,29 @@ ${email.body}`,
 Message: ${sms.body}`,
       };
 
-      const conductor = await initConductor();
-      const response = await conductor.sendToConductor(message);
+      let conductor = await initConductor();
 
-      return reply.send({ success: true, sessionId: response.session_id });
+      try {
+        const response = await conductor.sendToConductor(message);
+        return reply.send({ success: true, sessionId: response.session_id });
+      } catch (innerError: any) {
+        // Check if E2B sandbox died (expired after 1 hour)
+        if (innerError.message?.includes('Sandbox is probably not running anymore') ||
+            innerError.message?.includes('NotFoundError')) {
+          console.log('🔄 E2B sandbox expired, creating new conductor...');
+
+          // Reset conductor to force recreation
+          conductorService = null;
+
+          // Create fresh conductor and retry
+          conductor = await initConductor();
+          const response = await conductor.sendToConductor(message);
+          return reply.send({ success: true, sessionId: response.session_id });
+        }
+
+        // Re-throw if it's a different error
+        throw innerError;
+      }
     } catch (error: any) {
       console.error('❌ SMS webhook error:', error);
       return reply.code(500).send({ error: error.message });
