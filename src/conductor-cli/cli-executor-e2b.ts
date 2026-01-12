@@ -191,6 +191,10 @@ export class E2BCLIExecutor {
     // Output format
     if (options.outputFormat) {
       args.push('--output-format', options.outputFormat);
+      // stream-json requires --verbose in print mode
+      if (options.outputFormat === 'stream-json') {
+        args.push('--verbose');
+      }
     }
 
     // Append system prompt
