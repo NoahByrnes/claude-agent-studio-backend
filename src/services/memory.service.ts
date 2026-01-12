@@ -3,6 +3,10 @@
  *
  * Manages conductor memory persistence using claude-mem plugin.
  * Backs up and restores the ~/.claude-mem directory across conductor sessions.
+ *
+ * Storage:
+ * - Development: Local /tmp directory (ephemeral)
+ * - Production (Railway): Redis for persistence across deployments
  */
 
 import fs from 'fs/promises';
@@ -10,11 +14,13 @@ import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import type { Sandbox } from 'e2b';
+import { redis as redisClient } from '../lib/redis.js';
 
 const execAsync = promisify(exec);
 
 const MEMORY_DIR = '/root/.claude-mem';
 const BACKUP_DIR = '/tmp/conductor-memory-backups';
+const REDIS_MEMORY_KEY_PREFIX = 'conductor:memory:';
 
 /**
  * Initialize memory backup directory
@@ -29,16 +35,15 @@ export async function initMemoryBackup(): Promise<void> {
 }
 
 /**
- * Export memory from E2B sandbox to local backup
+ * Export memory from E2B sandbox to persistent storage
  * Downloads the .claude-mem directory from the sandbox
+ * Stores in Redis (production) or local file (development)
  */
 export async function exportMemoryFromSandbox(
   sandbox: Sandbox,
   conductorId: string
 ): Promise<void> {
   try {
-    const backupPath = path.join(BACKUP_DIR, `${conductorId}.tar.gz`);
-
     console.log(`📦 Exporting memory from sandbox ${sandbox.sandboxId}...`);
 
     // Check if .claude-mem directory exists first
@@ -61,11 +66,25 @@ export async function exportMemoryFromSandbox(
 
     // Download the tarball
     const memoryData = await sandbox.files.read('/tmp/claude-mem.tar.gz');
+    const buffer = Buffer.from(memoryData);
 
-    // Save to local backup (convert Uint8Array to Buffer)
-    await fs.writeFile(backupPath, Buffer.from(memoryData));
+    // Try Redis first (for production persistence across deployments)
+    const redis = redisClient;
+    if (redis) {
+      try {
+        const redisKey = `${REDIS_MEMORY_KEY_PREFIX}${conductorId}`;
+        await redis.set(redisKey, buffer.toString('base64'), 'EX', 7 * 24 * 60 * 60); // Expire after 7 days
+        console.log(`✅ Memory exported to Redis: ${redisKey}`);
+        return;
+      } catch (redisError: any) {
+        console.warn(`⚠️  Redis export failed, falling back to local: ${redisError.message}`);
+      }
+    }
 
-    console.log(`✅ Memory exported to ${backupPath}`);
+    // Fallback to local file storage (development)
+    const backupPath = path.join(BACKUP_DIR, `${conductorId}.tar.gz`);
+    await fs.writeFile(backupPath, buffer);
+    console.log(`✅ Memory exported to local file: ${backupPath}`);
   } catch (error: any) {
     console.error('❌ Failed to export memory:', error.message);
     // Don't throw - memory export is not critical
@@ -73,31 +92,50 @@ export async function exportMemoryFromSandbox(
 }
 
 /**
- * Import memory from local backup to E2B sandbox
+ * Import memory from persistent storage to E2B sandbox
  * Uploads and extracts the .claude-mem directory to the sandbox
+ * Checks Redis first (production) then falls back to local file (development)
  */
 export async function importMemoryToSandbox(
   sandbox: Sandbox,
   conductorId: string
 ): Promise<void> {
   try {
-    const backupPath = path.join(BACKUP_DIR, `${conductorId}.tar.gz`);
+    let memoryBuffer: Buffer | null = null;
+    let source = '';
 
-    // Check if backup exists
-    try {
-      await fs.access(backupPath);
-    } catch {
-      console.log('ℹ️  No existing memory backup found');
-      return;
+    // Try Redis first (production)
+    if (redisClient) {
+      try {
+        const redisKey = `${REDIS_MEMORY_KEY_PREFIX}${conductorId}`;
+        const base64Data = await redisClient.get(redisKey);
+        if (base64Data) {
+          memoryBuffer = Buffer.from(base64Data, 'base64');
+          source = `Redis:${redisKey}`;
+          console.log(`📥 Found memory backup in Redis`);
+        }
+      } catch (redisError: any) {
+        console.warn(`⚠️  Redis import failed, trying local: ${redisError.message}`);
+      }
     }
 
-    console.log(`📥 Importing memory from ${backupPath}...`);
+    // Fallback to local file storage (development)
+    if (!memoryBuffer) {
+      const backupPath = path.join(BACKUP_DIR, `${conductorId}.tar.gz`);
+      try {
+        memoryBuffer = await fs.readFile(backupPath);
+        source = backupPath;
+        console.log(`📥 Found memory backup in local file`);
+      } catch {
+        console.log('ℹ️  No existing memory backup found (Redis or local)');
+        return;
+      }
+    }
 
-    // Read backup
-    const memoryData = await fs.readFile(backupPath);
+    console.log(`📥 Importing memory from ${source}...`);
 
     // Upload to sandbox (convert Buffer to ArrayBuffer)
-    await sandbox.files.write('/tmp/claude-mem.tar.gz', memoryData.buffer as ArrayBuffer);
+    await sandbox.files.write('/tmp/claude-mem.tar.gz', memoryBuffer.buffer as ArrayBuffer);
 
     // Extract in sandbox
     await sandbox.commands.run(
