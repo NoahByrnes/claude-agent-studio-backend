@@ -41,10 +41,23 @@ export async function exportMemoryFromSandbox(
 
     console.log(`📦 Exporting memory from sandbox ${sandbox.sandboxId}...`);
 
+    // Check if .claude-mem directory exists first
+    const checkResult = await sandbox.commands.run('test -d /root/.claude-mem && echo "exists" || echo "missing"');
+
+    if (checkResult.stdout.trim() === 'missing') {
+      console.log('ℹ️  No .claude-mem directory found in sandbox (Claude CLI may not have created it yet)');
+      return;
+    }
+
     // Create tarball of memory directory inside sandbox
-    await sandbox.commands.run(
-      `cd /root && tar -czf /tmp/claude-mem.tar.gz .claude-mem 2>/dev/null || echo "No memory to export"`
+    const tarResult = await sandbox.commands.run(
+      'cd /root && tar -czf /tmp/claude-mem.tar.gz .claude-mem'
     );
+
+    if (tarResult.exitCode !== 0) {
+      console.log('ℹ️  Failed to create memory tarball (directory may be empty)');
+      return;
+    }
 
     // Download the tarball
     const memoryData = await sandbox.files.read('/tmp/claude-mem.tar.gz');

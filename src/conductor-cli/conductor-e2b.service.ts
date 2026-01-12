@@ -184,6 +184,20 @@ If you receive:
 **Commands like LIST_WORKERS, SPAWN_WORKER are for taking actions, NOT for replying!**
 **After using info commands (LIST_WORKERS), you MUST follow up with SEND_SMS/SEND_EMAIL!**
 
+## CRITICAL: COMMAND ORDERING
+**Commands execute in the order you output them!**
+
+For long-running tasks (SPAWN_WORKER), ALWAYS send acknowledgment FIRST:
+✓ CORRECT ORDER:
+1. SEND_SMS: +1234567890 | On it! Researching now, will update you in a few min.
+2. SPAWN_WORKER: <detailed task>
+
+✗ WRONG ORDER (user waits with no response):
+1. SPAWN_WORKER: <detailed task>
+2. SEND_SMS: +1234567890 | On it! (arrives after task completes)
+
+**Think: What does the user need to know RIGHT NOW vs. after the work is done?**
+
 ## Platform-Specific Response Formatting
 
 **[SMS] Messages - ALWAYS use SEND_SMS command:**
