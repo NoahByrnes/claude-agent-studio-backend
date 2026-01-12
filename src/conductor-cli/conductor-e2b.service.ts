@@ -15,7 +15,7 @@ import {
   deliverFilesFromSandbox,
   parseDeliverFileCommand,
 } from '../services/file-delivery.service.js';
-import { addCLIOutput } from '../routes/monitoring.js';
+import { addCLIOutput, addWorkerDetailMessage, scheduleWorkerCleanup } from '../routes/monitoring.js';
 import type {
   ConductorSession,
   WorkerSession,
@@ -516,12 +516,41 @@ You have full access to:
 Begin working on the task now.`;
 
     console.log(`   📤 Sending initial task to worker...`);
-    const initialResponse = await executor.execute(workerPrompt, {
-      outputFormat: 'json',
-      skipPermissions: true, // Workers run autonomously without permission prompts
-      timeout: 600000, // 10 minutes for complex tasks like research, web browsing
-    });
-    const workerId = initialResponse.session_id;
+
+    // Use streaming to capture all worker CLI details (tool calls, thinking, etc.)
+    let workerId = '';
+    let finalResult = '';
+
+    for await (const message of executor.executeStream(workerPrompt, {
+      outputFormat: 'stream-json',
+      skipPermissions: true,
+      timeout: 600000,
+    })) {
+      // Capture session ID from init message
+      if (message.type === 'init' && message.session_id) {
+        workerId = message.session_id;
+      }
+
+      // Capture final result
+      if (message.type === 'result' && message.result) {
+        finalResult = message.result;
+      }
+
+      // Capture all messages to worker detail feed
+      if (workerId) {
+        addWorkerDetailMessage({
+          timestamp: new Date(),
+          workerId,
+          sandboxId: sandbox.sandboxId,
+          messageType: message.type as any,
+          content: message,
+        });
+      }
+    }
+
+    if (!workerId) {
+      throw new Error('Failed to get worker session ID from CLI stream');
+    }
 
     console.log(`   ✅ Worker ${workerId} started, received initial response`);
 
@@ -551,6 +580,18 @@ Begin working on the task now.`;
 
     this.events.onWorkerSpawned?.(workerId, task);
     console.log(`✅ Worker spawned: ${workerId} in sandbox ${sandbox.sandboxId}`);
+
+    // Create CLIResponse from stream result for conversation loop
+    const initialResponse: CLIResponse = {
+      type: 'result',
+      subtype: 'success',
+      session_id: workerId,
+      total_cost_usd: 0,
+      is_error: false,
+      duration_ms: 0,
+      num_turns: 1,
+      result: finalResult,
+    };
 
     // Start the conductor-worker conversation loop
     await this.manageWorkerConversation(workerId, initialResponse);
@@ -722,6 +763,9 @@ Begin working on the task now.`;
         (id) => id !== workerId
       );
     }
+
+    // Schedule cleanup of worker history after 15 minutes (for troubleshooting)
+    scheduleWorkerCleanup(workerId);
 
     console.log(`✅ Worker killed: ${workerId}`);
   }

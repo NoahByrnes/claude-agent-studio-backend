@@ -47,6 +47,71 @@ export function addCLIOutput(message: CLIMessage) {
   }
 }
 
+// Worker Detail Messages - captures full CLI stream per worker
+interface WorkerDetailMessage {
+  timestamp: Date;
+  workerId: string;
+  sandboxId: string;
+  messageType: 'init' | 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'result';
+  content: any;
+}
+
+const workerDetailBuffers = new Map<string, WorkerDetailMessage[]>();
+const workerWebSocketClients = new Map<string, Set<(message: WorkerDetailMessage) => void>>();
+const MAX_WORKER_BUFFER_SIZE = 500; // 500 messages per worker
+const WORKER_HISTORY_TTL = 15 * 60 * 1000; // Keep history for 15 minutes after worker killed
+
+// Cleanup timers for killed workers
+const workerCleanupTimers = new Map<string, NodeJS.Timeout>();
+
+export function addWorkerDetailMessage(message: WorkerDetailMessage) {
+  // Get or create buffer for this worker
+  let buffer = workerDetailBuffers.get(message.workerId);
+  if (!buffer) {
+    buffer = [];
+    workerDetailBuffers.set(message.workerId, buffer);
+  }
+
+  buffer.push(message);
+  if (buffer.length > MAX_WORKER_BUFFER_SIZE) {
+    buffer.shift(); // Remove oldest
+  }
+
+  // Broadcast to WebSocket clients subscribed to this worker
+  const clients = workerWebSocketClients.get(message.workerId);
+  if (clients) {
+    for (const broadcast of clients) {
+      try {
+        broadcast(message);
+      } catch (error) {
+        // Client disconnected
+      }
+    }
+  }
+}
+
+export function scheduleWorkerCleanup(workerId: string) {
+  // Clear existing timer if any
+  const existingTimer = workerCleanupTimers.get(workerId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+
+  // Schedule cleanup in 15 minutes
+  const timer = setTimeout(() => {
+    console.log(`🧹 Cleaning up worker ${workerId} history (15min TTL expired)`);
+    workerDetailBuffers.delete(workerId);
+    workerWebSocketClients.delete(workerId);
+    workerCleanupTimers.delete(workerId);
+  }, WORKER_HISTORY_TTL);
+
+  workerCleanupTimers.set(workerId, timer);
+}
+
+export function getWorkerDetailMessages(workerId: string): WorkerDetailMessage[] {
+  return workerDetailBuffers.get(workerId) || [];
+}
+
 export async function monitoringRoutes(fastify: FastifyInstance) {
 
   /**
@@ -287,6 +352,79 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
     socket.on('close', () => {
       console.log('📡 CLI feed WebSocket client disconnected');
       cliWebSocketClients.delete(broadcast);
+    });
+  });
+
+  /**
+   * GET /api/monitoring/workers/:workerId/details
+   * Get detailed CLI messages for a specific worker
+   */
+  fastify.get('/api/monitoring/workers/:workerId/details', async (request, reply) => {
+    try {
+      const { workerId } = request.params as { workerId: string };
+      const { limit } = request.query as { limit?: string };
+      const maxMessages = limit ? parseInt(limit) : 500;
+
+      const messages = getWorkerDetailMessages(workerId);
+      const sliced = messages.slice(-maxMessages);
+
+      return reply.send({
+        workerId,
+        messages: sliced,
+        count: sliced.length,
+        totalBuffered: messages.length,
+      });
+    } catch (error: any) {
+      return reply.code(500).send({
+        error: 'Failed to get worker details',
+        message: error.message,
+      });
+    }
+  });
+
+  /**
+   * WebSocket /api/monitoring/workers/:workerId/stream
+   * Real-time CLI output stream for a specific worker
+   */
+  fastify.get('/api/monitoring/workers/:workerId/stream', { websocket: true }, (socket, req) => {
+    const workerId = (req.params as any).workerId;
+
+    console.log(`📡 Worker ${workerId} detail WebSocket client connected`);
+
+    // Send initial buffer
+    const history = getWorkerDetailMessages(workerId);
+    socket.send(JSON.stringify({
+      type: 'history',
+      messages: history.slice(-50), // Last 50 messages
+    }));
+
+    // Store connection for broadcasting
+    const broadcast = (message: WorkerDetailMessage) => {
+      if (socket.readyState === 1) { // OPEN
+        socket.send(JSON.stringify({
+          type: 'message',
+          data: message,
+        }));
+      }
+    };
+
+    // Add to worker-specific broadcasters
+    let clients = workerWebSocketClients.get(workerId);
+    if (!clients) {
+      clients = new Set();
+      workerWebSocketClients.set(workerId, clients);
+    }
+    clients.add(broadcast);
+
+    socket.on('close', () => {
+      console.log(`📡 Worker ${workerId} detail WebSocket client disconnected`);
+      const clients = workerWebSocketClients.get(workerId);
+      if (clients) {
+        clients.delete(broadcast);
+        if (clients.size === 0) {
+          workerWebSocketClients.delete(workerId);
+        }
+      }
     });
   });
 }
