@@ -85,7 +85,7 @@ export interface WorkerReport {
 // ============================================================================
 
 export interface DetectedCommand {
-  type: 'spawn-worker' | 'send-email' | 'send-sms' | 'deliver-file' | 'kill-worker' | 'none';
+  type: 'spawn-worker' | 'send-email' | 'send-sms' | 'deliver-file' | 'list-workers' | 'kill-worker' | 'none';
   payload?: Record<string, any>;
 }
 

@@ -211,6 +211,7 @@ When you output "SPAWN_WORKER: <task>", the system:
 **DELIVER_FILE: <to> | <file-paths> | <subject> | <message>** - Extracts files from worker sandbox and emails them
 **KILL_WORKER: <worker-id>** - Terminates specific worker (use the ID from [WORKER:id] tags)
 **KILL_WORKER: *** - Terminates ALL active workers (use when done with all tasks)
+**LIST_WORKERS** - Shows all active workers with their IDs and tasks (use to check what's running)
 
 Example DELIVER_FILE usage:
 DELIVER_FILE: user@example.com | /tmp/report.pdf, /tmp/data.csv | Analysis Complete | Here are the files you requested
@@ -231,6 +232,17 @@ DELIVER_FILE: user@example.com | /tmp/report.pdf, /tmp/data.csv | Analysis Compl
 5. **You vet the work**: Review their output. If not satisfactory, tell them what to fix
 6. **Iterate until satisfied**, then send final response to client
 7. **Clean up**: "KILL_WORKER: abc123"
+
+Example Flow with LIST_WORKERS:
+[SMS] "What workers are running?"
+
+You: "LIST_WORKERS"
+[SYSTEM] Active Workers (2):
+1. [WORKER:abc123] - Research skiing conditions near Vancouver...
+2. [WORKER:def456] - Analyze Q4 sales data and generate report...
+
+You: "KILL_WORKER: abc123"
+You: "SEND_SMS: +16041234567 | Killed ski research worker. Sales analysis still running."
 
 Example Flow:
 [EMAIL] "Analyze Q4 sales and send report"
@@ -498,6 +510,47 @@ Begin working on the task now.`;
   }
 
   /**
+   * List active workers and send info to conductor.
+   */
+  async listWorkersForConductor(): Promise<void> {
+    if (!this.conductorSession || !this.conductorSandbox) return;
+
+    const activeWorkers = this.getActiveWorkers();
+
+    if (activeWorkers.length === 0) {
+      console.log('📋 LIST_WORKERS: No active workers');
+
+      // Send system message to conductor
+      const systemMessage = '[SYSTEM] No active workers currently running.';
+      await this.conductorSandbox.executor.sendToSession(
+        this.conductorSession.id,
+        systemMessage,
+        { timeout: 300000 }
+      );
+      return;
+    }
+
+    console.log(`📋 LIST_WORKERS: Found ${activeWorkers.length} active workers`);
+
+    // Format worker list concisely
+    const workerList = activeWorkers.map((w, idx) => {
+      const taskPreview = w.task.substring(0, 60) + (w.task.length > 60 ? '...' : '');
+      return `${idx + 1}. [WORKER:${w.id}] - ${taskPreview}`;
+    }).join('\n');
+
+    const systemMessage = `[SYSTEM] Active Workers (${activeWorkers.length}):\n${workerList}`;
+
+    // Send to conductor
+    await this.conductorSandbox.executor.sendToSession(
+      this.conductorSession.id,
+      systemMessage,
+      { timeout: 300000 }
+    );
+
+    console.log(`   ✅ Sent worker list to conductor`);
+  }
+
+  /**
    * Kill a worker and close its E2B sandbox.
    */
   async killWorker(workerId: string): Promise<void> {
@@ -579,6 +632,11 @@ Begin working on the task now.`;
         }
       }
 
+      // LIST_WORKERS
+      if (trimmed === 'LIST_WORKERS' || trimmed.startsWith('LIST_WORKERS')) {
+        commands.push({ type: 'list-workers', payload: {} });
+      }
+
       // KILL_WORKER: <worker-id> or KILL_WORKER: * (kill all)
       if (trimmed.startsWith('KILL_WORKER:')) {
         const workerId = trimmed.slice('KILL_WORKER:'.length).trim();
@@ -636,6 +694,10 @@ Begin working on the task now.`;
             if (cmd.payload) {
               await this.deliverFiles(cmd.payload);
             }
+            break;
+
+          case 'list-workers':
+            await this.listWorkersForConductor();
             break;
 
           case 'kill-worker':
