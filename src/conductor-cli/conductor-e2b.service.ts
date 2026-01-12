@@ -539,20 +539,26 @@ Begin working on the task now.`;
     // Use streaming to capture all worker CLI details (tool calls, thinking, etc.)
     let workerId = '';
     let finalResult = '';
+    let messageCount = 0;
 
     for await (const message of executor.executeStream(workerPrompt, {
       outputFormat: 'stream-json',
       skipPermissions: true,
       timeout: 600000,
     })) {
+      messageCount++;
+      console.log(`   📨 Worker stream message ${messageCount}: type=${message.type}`);
+
       // Capture session ID from init message
       if (message.type === 'init' && message.session_id) {
         workerId = message.session_id;
+        console.log(`   ✅ Got worker session ID: ${workerId}`);
       }
 
       // Capture final result
       if (message.type === 'result' && message.result) {
         finalResult = message.result;
+        console.log(`   ✅ Got worker final result`);
       }
 
       // Capture all messages to worker detail feed
@@ -566,6 +572,8 @@ Begin working on the task now.`;
         });
       }
     }
+
+    console.log(`   📊 Stream ended. Total messages: ${messageCount}, Worker ID: ${workerId || 'NOT SET'}`);
 
     if (!workerId) {
       throw new Error('Failed to get worker session ID from CLI stream');

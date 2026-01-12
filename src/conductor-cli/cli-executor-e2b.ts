@@ -97,6 +97,8 @@ export class E2BCLIExecutor {
     const args = this.buildArgs(prompt, { ...options, outputFormat: 'stream-json' });
     const command = `claude ${args.join(' ')}`;
 
+    console.log(`   🚀 Starting CLI stream command with timeout ${options.timeout || 600000}ms`);
+
     // Default timeout: 10 minutes for workers doing research/complex tasks
     const timeout = options.timeout || 600000;
 
@@ -108,6 +110,8 @@ export class E2BCLIExecutor {
       },
       timeoutMs: timeout,
     });
+
+    console.log(`   ⏳ Waiting for CLI command to complete...`);
 
     // Wait for completion
     let result;
@@ -138,15 +142,22 @@ export class E2BCLIExecutor {
 
     // Parse NDJSON output
     const lines = result.stdout.split('\n');
+    console.log(`   📜 CLI stream returned ${lines.length} lines`);
+
+    let validMessages = 0;
     for (const line of lines) {
       if (line.trim()) {
         try {
-          yield JSON.parse(line) as CLIStreamMessage;
-        } catch {
-          // Skip non-JSON lines
+          const parsed = JSON.parse(line) as CLIStreamMessage;
+          validMessages++;
+          yield parsed;
+        } catch (error) {
+          console.log(`   ⚠️  Skipping non-JSON line: ${line.substring(0, 100)}`);
         }
       }
     }
+
+    console.log(`   ✅ Parsed ${validMessages} valid JSON messages from stream`);
   }
 
   /**
