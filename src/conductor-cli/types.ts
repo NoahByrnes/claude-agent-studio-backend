@@ -58,7 +58,7 @@ export interface WorkerSession extends Session {
   role: 'worker';
   conductorId: string;
   task: string;
-  status: 'running' | 'complete' | 'error' | 'blocked';
+  status: 'initializing' | 'running' | 'complete' | 'error' | 'blocked';
 }
 
 // ============================================================================

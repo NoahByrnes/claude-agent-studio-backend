@@ -513,6 +513,37 @@ You: "KILL_WORKER: abc123"   ← Use the actual worker ID from [WORKER:abc123]
       );
     }
 
+    // Create placeholder worker session IMMEDIATELY so it shows up in dashboard
+    // Use sandbox ID as temporary ID until we get the real CLI session ID
+    const tempWorkerId = `worker-${sandbox.sandboxId.substring(0, 8)}`;
+
+    const placeholderSession: WorkerSession = {
+      id: tempWorkerId,
+      role: 'worker',
+      conductorId: this.conductorSession.id,
+      task,
+      status: 'initializing',
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      sandboxId: sandbox.sandboxId,
+    };
+
+    // Register worker IMMEDIATELY so it appears in dashboard
+    this.workerSessions.set(tempWorkerId, placeholderSession);
+    this.workerSandboxes.set(tempWorkerId, { sandbox, executor });
+    this.conductorSession.activeWorkers.push(tempWorkerId);
+
+    console.log(`   📋 Worker registered with temp ID: ${tempWorkerId} (visible in dashboard now)`);
+
+    // Capture initial worker task to CLI feed
+    addCLIOutput({
+      timestamp: new Date(),
+      source: 'worker',
+      sourceId: tempWorkerId,
+      content: `[NEW WORKER TASK]: ${task}`,
+      type: 'system',
+    });
+
     // Start worker CLI session with initial task
     const workerPrompt = `You are an autonomous WORKER agent. A conductor has delegated a task to you.
 
@@ -537,7 +568,7 @@ Begin working on the task now.`;
     console.log(`   📤 Sending initial task to worker...`);
 
     // Use streaming to capture all worker CLI details (tool calls, thinking, etc.)
-    let workerId = '';
+    let realWorkerId = '';
     let finalResult = '';
     let messageCount = 0;
 
@@ -549,72 +580,79 @@ Begin working on the task now.`;
       messageCount++;
       console.log(`   📨 Worker stream message ${messageCount}: type=${message.type}`);
 
-      // Log first message structure to debug session_id location
-      if (messageCount === 1) {
-        console.log(`   🔍 First message structure:`, JSON.stringify(message, null, 2));
-      }
-
       // Extract session ID from any message that has it
       // Could be in 'init', 'result', or 'system' message
-      if (!workerId && (message as any).session_id) {
-        workerId = (message as any).session_id;
-        console.log(`   ✅ Got worker session ID from ${message.type} message: ${workerId}`);
+      if (!realWorkerId && (message as any).session_id) {
+        realWorkerId = (message as any).session_id;
+        console.log(`   ✅ Got real worker session ID from ${message.type} message: ${realWorkerId}`);
+
+        // Update worker record with real ID
+        if (realWorkerId !== tempWorkerId) {
+          console.log(`   🔄 Updating worker ID: ${tempWorkerId} → ${realWorkerId}`);
+
+          // Move worker session to real ID
+          const session = this.workerSessions.get(tempWorkerId);
+          if (session) {
+            session.id = realWorkerId;
+            session.status = 'running';
+            session.lastActivityAt = new Date();
+            this.workerSessions.delete(tempWorkerId);
+            this.workerSessions.set(realWorkerId, session);
+          }
+
+          // Move sandbox reference to real ID
+          const sandboxRef = this.workerSandboxes.get(tempWorkerId);
+          if (sandboxRef) {
+            this.workerSandboxes.delete(tempWorkerId);
+            this.workerSandboxes.set(realWorkerId, sandboxRef);
+          }
+
+          // Update conductor's active workers list
+          const index = this.conductorSession.activeWorkers.indexOf(tempWorkerId);
+          if (index !== -1) {
+            this.conductorSession.activeWorkers[index] = realWorkerId;
+          }
+        }
       }
 
       // Capture final result
       if (message.type === 'result') {
-        console.log(`   🔍 Result message structure:`, JSON.stringify(message, null, 2));
         if ((message as any).result) {
           finalResult = (message as any).result;
           console.log(`   ✅ Got worker final result`);
         }
       }
 
-      // Capture all messages to worker detail feed (even before we have workerId)
-      // We'll use the workerId from result message later
+      // Capture all messages to worker detail feed
+      // Use real ID if we have it, otherwise temp ID
+      const currentWorkerId = realWorkerId || tempWorkerId;
       addWorkerDetailMessage({
         timestamp: new Date(),
-        workerId: workerId || 'pending',
+        workerId: currentWorkerId,
         sandboxId: sandbox.sandboxId,
         messageType: message.type as any,
         content: message,
       });
+
+      // Update worker activity timestamp
+      const session = this.workerSessions.get(currentWorkerId);
+      if (session) {
+        session.lastActivityAt = new Date();
+      }
     }
 
-    console.log(`   📊 Stream ended. Total messages: ${messageCount}, Worker ID: ${workerId || 'NOT SET'}`);
+    console.log(`   📊 Stream ended. Total messages: ${messageCount}, Worker ID: ${realWorkerId || 'NOT SET'}`);
 
-    if (!workerId) {
-      throw new Error('Failed to get worker session ID from CLI stream');
+    // Use real ID if we got it, otherwise keep temp ID
+    const workerId = realWorkerId || tempWorkerId;
+
+    if (!realWorkerId) {
+      console.warn(`   ⚠️  Never got real session ID from CLI, using temp ID: ${tempWorkerId}`);
     }
 
-    console.log(`   ✅ Worker ${workerId} started, received initial response`);
-
-    // Capture initial worker task to CLI feed
-    addCLIOutput({
-      timestamp: new Date(),
-      source: 'worker',
-      sourceId: workerId,
-      content: `[NEW WORKER TASK]: ${task}`,
-      type: 'system',
-    });
-
-    const workerSession: WorkerSession = {
-      id: workerId,
-      role: 'worker',
-      conductorId: this.conductorSession.id,
-      task,
-      status: 'running',
-      createdAt: new Date(),
-      lastActivityAt: new Date(),
-      sandboxId: sandbox.sandboxId,
-    };
-
-    this.workerSessions.set(workerId, workerSession);
-    this.workerSandboxes.set(workerId, { sandbox, executor });
-    this.conductorSession.activeWorkers.push(workerId);
+    console.log(`   ✅ Worker ${workerId} completed initial task`);
 
     this.events.onWorkerSpawned?.(workerId, task);
-    console.log(`✅ Worker spawned: ${workerId} in sandbox ${sandbox.sandboxId}`);
 
     // Create CLIResponse from stream result for conversation loop
     const initialResponse: CLIResponse = {
