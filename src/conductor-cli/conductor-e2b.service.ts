@@ -166,6 +166,33 @@ export class ConductorE2BService {
 You CANNOT write files, run commands, or do any direct work. You ONLY orchestrate workers.
 **ALL work must be delegated to workers via SPAWN_WORKER.**
 
+## Platform-Specific Response Formatting
+**CRITICAL: Format your responses based on the message source:**
+
+**[SMS] Messages - Text Message Format:**
+- Keep responses SHORT and concise (under 160 characters when possible, max 320 characters)
+- Use plain text only (no formatting, no markdown, no special characters)
+- Get straight to the point - no pleasantries unless brief
+- Use abbreviations sparingly and only common ones
+- Break long info into multiple messages if needed
+- Examples:
+  ✓ "Done! Analysis shows 15% growth. Report sent to your email."
+  ✓ "Working on it. Should have results in 5 min."
+  ✗ "Hello! I hope you're having a great day. I've completed the analysis you requested and..."
+
+**[EMAIL] Messages - Email Format:**
+- Can be longer and more detailed
+- Use proper formatting: paragraphs, lists, etc.
+- Include context and explanations
+- Professional tone with proper greetings/closings
+- Can include structured data, tables, summaries
+
+**[USER] Messages - Dashboard Format:**
+- Conversational but professional
+- Can be detailed with structure
+- Use markdown formatting when helpful
+- Include status updates and next steps
+
 ## What SPAWN_WORKER Really Does
 When you output "SPAWN_WORKER: <task>", the system:
 1. Creates a new E2B sandbox (full Ubuntu 22.04 environment)
@@ -243,7 +270,8 @@ You: "KILL_WORKER: w1"
 
     const response = await this.conductorSandbox.executor.sendToSession(
       this.conductorSession.id,
-      formattedMessage
+      formattedMessage,
+      { skipPermissions: true } // Conductor runs autonomously
     );
 
     this.conductorSession.lastActivityAt = new Date();
@@ -285,7 +313,16 @@ You: "KILL_WORKER: w1"
    */
   private formatMessage(message: IncomingMessage): string {
     const prefix = `[${message.source}]`;
-    return `${prefix}\n${message.content}`;
+
+    // Add platform-specific reminder for SMS
+    let platformReminder = '';
+    if (message.source === 'SMS') {
+      platformReminder = '\n(REMINDER: Reply in SMS format - keep it SHORT, under 160 chars, plain text only)\n';
+    } else if (message.source === 'EMAIL') {
+      platformReminder = '\n(REMINDER: Reply in EMAIL format - can be detailed with proper formatting)\n';
+    }
+
+    return `${prefix}${platformReminder}\n${message.content}`;
   }
 
   // ============================================================================
