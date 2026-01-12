@@ -549,28 +549,36 @@ Begin working on the task now.`;
       messageCount++;
       console.log(`   📨 Worker stream message ${messageCount}: type=${message.type}`);
 
-      // Capture session ID from init message
-      if (message.type === 'init' && message.session_id) {
-        workerId = message.session_id;
-        console.log(`   ✅ Got worker session ID: ${workerId}`);
+      // Log first message structure to debug session_id location
+      if (messageCount === 1) {
+        console.log(`   🔍 First message structure:`, JSON.stringify(message, null, 2));
+      }
+
+      // Extract session ID from any message that has it
+      // Could be in 'init', 'result', or 'system' message
+      if (!workerId && (message as any).session_id) {
+        workerId = (message as any).session_id;
+        console.log(`   ✅ Got worker session ID from ${message.type} message: ${workerId}`);
       }
 
       // Capture final result
-      if (message.type === 'result' && message.result) {
-        finalResult = message.result;
-        console.log(`   ✅ Got worker final result`);
+      if (message.type === 'result') {
+        console.log(`   🔍 Result message structure:`, JSON.stringify(message, null, 2));
+        if ((message as any).result) {
+          finalResult = (message as any).result;
+          console.log(`   ✅ Got worker final result`);
+        }
       }
 
-      // Capture all messages to worker detail feed
-      if (workerId) {
-        addWorkerDetailMessage({
-          timestamp: new Date(),
-          workerId,
-          sandboxId: sandbox.sandboxId,
-          messageType: message.type as any,
-          content: message,
-        });
-      }
+      // Capture all messages to worker detail feed (even before we have workerId)
+      // We'll use the workerId from result message later
+      addWorkerDetailMessage({
+        timestamp: new Date(),
+        workerId: workerId || 'pending',
+        sandboxId: sandbox.sandboxId,
+        messageType: message.type as any,
+        content: message,
+      });
     }
 
     console.log(`   📊 Stream ended. Total messages: ${messageCount}, Worker ID: ${workerId || 'NOT SET'}`);
