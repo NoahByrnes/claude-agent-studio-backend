@@ -11,6 +11,10 @@ import {
   importMemoryToSandbox,
   exportMemoryFromSandbox,
 } from '../services/memory.service.js';
+import {
+  deliverFilesFromSandbox,
+  parseDeliverFileCommand,
+} from '../services/file-delivery.service.js';
 import type {
   ConductorSession,
   WorkerSession,
@@ -177,7 +181,11 @@ When you output "SPAWN_WORKER: <task>", the system:
 **SPAWN_WORKER: <detailed task>** - Spawns autonomous Claude worker
 **SEND_EMAIL: <to> | <subject> | <body>** - Sends real email
 **SEND_SMS: <to> | <message>** - Sends real SMS
+**DELIVER_FILE: <to> | <file-paths> | <subject> | <message>** - Extracts files from worker sandbox and emails them
 **KILL_WORKER: <worker-id>** - Terminates worker
+
+Example DELIVER_FILE usage:
+DELIVER_FILE: user@example.com | /tmp/report.pdf, /tmp/data.csv | Analysis Complete | Here are the files you requested
 
 ## Message Sources
 - [EMAIL] - External emails
@@ -508,6 +516,14 @@ Begin working on the task now.`;
         }
       }
 
+      // DELIVER_FILE: <to> | <file-paths> | <subject> | <message>
+      if (trimmed.startsWith('DELIVER_FILE:')) {
+        const deliveryRequest = parseDeliverFileCommand(trimmed);
+        if (deliveryRequest) {
+          commands.push({ type: 'deliver-file', payload: deliveryRequest });
+        }
+      }
+
       // KILL_WORKER: <worker-id>
       if (trimmed.startsWith('KILL_WORKER:')) {
         const workerId = trimmed.slice('KILL_WORKER:'.length).trim();
@@ -549,6 +565,12 @@ Begin working on the task now.`;
             }
             break;
 
+          case 'deliver-file':
+            if (cmd.payload) {
+              await this.deliverFiles(cmd.payload);
+            }
+            break;
+
           case 'kill-worker':
             if (cmd.payload?.workerId) {
               await this.killWorker(cmd.payload.workerId);
@@ -559,6 +581,41 @@ Begin working on the task now.`;
         console.error(`❌ Failed to execute command ${cmd.type}:`, error);
         this.events.onError?.(error as Error);
       }
+    }
+  }
+
+  /**
+   * Deliver files from the most recent worker to a recipient.
+   * Files are extracted from worker sandbox and emailed as attachments.
+   */
+  private async deliverFiles(request: any): Promise<void> {
+    try {
+      // Find the most recently active worker
+      const activeWorkers = this.getActiveWorkers();
+      const allWorkers = Array.from(this.workerSessions.values());
+      const latestWorker = allWorkers.sort((a, b) =>
+        b.lastActivityAt.getTime() - a.lastActivityAt.getTime()
+      )[0];
+
+      if (!latestWorker) {
+        console.error('❌ No workers available for file delivery');
+        return;
+      }
+
+      const workerSandbox = this.workerSandboxes.get(latestWorker.id);
+      if (!workerSandbox) {
+        console.error(`❌ Worker sandbox not found: ${latestWorker.id}`);
+        return;
+      }
+
+      console.log(`📦 Delivering files from worker ${latestWorker.id.substring(0, 8)}...`);
+
+      await deliverFilesFromSandbox(workerSandbox.sandbox, request);
+
+      console.log('✅ Files delivered successfully');
+    } catch (error: any) {
+      console.error('❌ File delivery failed:', error.message);
+      throw error;
     }
   }
 
