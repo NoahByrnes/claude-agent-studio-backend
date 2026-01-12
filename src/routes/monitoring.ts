@@ -112,6 +112,65 @@ export function getWorkerDetailMessages(workerId: string): WorkerDetailMessage[]
   return workerDetailBuffers.get(workerId) || [];
 }
 
+/**
+ * Move worker detail messages from old ID to new ID
+ * Used when transitioning from temp worker ID to real CLI session ID
+ */
+export function moveWorkerDetailMessages(oldWorkerId: string, newWorkerId: string): void {
+  const oldBuffer = workerDetailBuffers.get(oldWorkerId);
+  if (oldBuffer && oldBuffer.length > 0) {
+    console.log(`   🔄 Moving ${oldBuffer.length} worker detail messages: ${oldWorkerId} → ${newWorkerId}`);
+
+    // Update all message workerIds
+    oldBuffer.forEach(msg => msg.workerId = newWorkerId);
+
+    // Get or create new buffer
+    let newBuffer = workerDetailBuffers.get(newWorkerId);
+    if (!newBuffer) {
+      newBuffer = [];
+      workerDetailBuffers.set(newWorkerId, newBuffer);
+    }
+
+    // Merge old messages into new buffer
+    newBuffer.push(...oldBuffer);
+
+    // Delete old buffer
+    workerDetailBuffers.delete(oldWorkerId);
+
+    // Move WebSocket clients
+    const oldClients = workerWebSocketClients.get(oldWorkerId);
+    if (oldClients && oldClients.size > 0) {
+      console.log(`   🔄 Moving ${oldClients.size} WebSocket clients: ${oldWorkerId} → ${newWorkerId}`);
+
+      let newClients = workerWebSocketClients.get(newWorkerId);
+      if (!newClients) {
+        newClients = new Set();
+        workerWebSocketClients.set(newWorkerId, newClients);
+      }
+
+      // Move clients
+      oldClients.forEach(client => newClients!.add(client));
+      workerWebSocketClients.delete(oldWorkerId);
+
+      // Notify clients of history with updated IDs
+      for (const broadcast of newClients) {
+        try {
+          // Send history to client so they have all messages under new ID
+          broadcast({
+            timestamp: new Date(),
+            workerId: newWorkerId,
+            sandboxId: '', // Will be filled by actual messages
+            messageType: 'system' as any,
+            content: { type: 'worker_id_updated', oldId: oldWorkerId, newId: newWorkerId }
+          });
+        } catch {
+          // Client disconnected
+        }
+      }
+    }
+  }
+}
+
 export async function monitoringRoutes(fastify: FastifyInstance) {
 
   /**

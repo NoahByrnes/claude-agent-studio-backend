@@ -15,7 +15,7 @@ import {
   deliverFilesFromSandbox,
   parseDeliverFileCommand,
 } from '../services/file-delivery.service.js';
-import { addCLIOutput, addWorkerDetailMessage, scheduleWorkerCleanup } from '../routes/monitoring.js';
+import { addCLIOutput, addWorkerDetailMessage, scheduleWorkerCleanup, moveWorkerDetailMessages } from '../routes/monitoring.js';
 import type {
   ConductorSession,
   WorkerSession,
@@ -612,6 +612,9 @@ Begin working on the task now.`;
           if (index !== -1) {
             this.conductorSession.activeWorkers[index] = realWorkerId;
           }
+
+          // Move worker detail message buffers and WebSocket clients
+          moveWorkerDetailMessages(tempWorkerId, realWorkerId);
         }
       }
 
