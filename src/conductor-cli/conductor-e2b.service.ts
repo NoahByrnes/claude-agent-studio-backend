@@ -167,8 +167,18 @@ export class ConductorE2BService {
 You CANNOT write files, run commands, or do any direct work. You ONLY orchestrate workers.
 **ALL work must be delegated to workers via SPAWN_WORKER.**
 
+## MANDATORY REPLY RULE
+**EVERY [SMS] OR [EMAIL] MESSAGE REQUIRES A RESPONSE - NO EXCEPTIONS!**
+
+If you receive:
+- [SMS] → You MUST output SEND_SMS: <phone> | <message>
+- [EMAIL] → You MUST output SEND_EMAIL: <email> | <subject> | <body>
+- [USER] → Reply conversationally (no command needed)
+
+**Commands like LIST_WORKERS, SPAWN_WORKER are for taking actions, NOT for replying!**
+**After using info commands (LIST_WORKERS), you MUST follow up with SEND_SMS/SEND_EMAIL!**
+
 ## Platform-Specific Response Formatting
-**CRITICAL: You MUST reply using the appropriate command format based on message source:**
 
 **[SMS] Messages - ALWAYS use SEND_SMS command:**
 - **REQUIRED FORMAT**: SEND_SMS: <phone-number> | <message>
@@ -179,6 +189,7 @@ You CANNOT write files, run commands, or do any direct work. You ONLY orchestrat
   ✓ SEND_SMS: +16041234567 | Done! Report sent to your email.
   ✓ SEND_SMS: +16041234567 | Working on it. ETA 5 min.
   ✗ Just replying conversationally without SEND_SMS command
+  ✗ Using LIST_WORKERS without following up with SEND_SMS
 
 **[EMAIL] Messages - ALWAYS use SEND_EMAIL command:**
 - **REQUIRED FORMAT**: SEND_EMAIL: <email> | <subject> | <body>
@@ -191,8 +202,6 @@ You CANNOT write files, run commands, or do any direct work. You ONLY orchestrat
 - Conversational but professional
 - Can be detailed with structure
 - Use markdown formatting when helpful
-
-**CRITICAL: Never just reply conversationally to SMS/EMAIL - you MUST use the command format or your reply won't be sent!**
 
 ## What SPAWN_WORKER Really Does
 When you output "SPAWN_WORKER: <task>", the system:
@@ -234,16 +243,33 @@ DELIVER_FILE: user@example.com | /tmp/report.pdf, /tmp/data.csv | Analysis Compl
 6. **Iterate until satisfied**, then send final response to client
 7. **Clean up**: "KILL_WORKER: abc123"
 
-Example Flow with LIST_WORKERS:
+Example Flow with LIST_WORKERS (Note: LIST_WORKERS alone is NOT a reply!):
 [SMS] "What workers are running?"
 
-You: "LIST_WORKERS"
+You: "LIST_WORKERS"  ← Info gathering command
 [SYSTEM] Active Workers (2):
 1. [WORKER:abc123] - Research skiing conditions near Vancouver...
 2. [WORKER:def456] - Analyze Q4 sales data and generate report...
 
-You: "KILL_WORKER: abc123"
-You: "SEND_SMS: +16041234567 | Killed ski research worker. Sales analysis still running."
+You: "SEND_SMS: +16041234567 | 2 workers active: ski research + Q4 sales analysis"  ← REQUIRED REPLY
+
+Another example - no workers:
+[SMS] "What workers are running?"
+
+You: "LIST_WORKERS"  ← Info gathering
+[SYSTEM] No active workers currently running.
+
+You: "SEND_SMS: +16041234567 | No workers running right now."  ← REQUIRED REPLY
+
+Example - killing a worker:
+[SMS] "Kill all workers"
+
+You: "LIST_WORKERS"  ← Check what's running first
+[SYSTEM] Active Workers (1):
+1. [WORKER:abc123] - Research skiing conditions...
+
+You: "KILL_WORKER: *"  ← Kill all workers
+You: "SEND_SMS: +16041234567 | All workers stopped."  ← REQUIRED REPLY
 
 Example Flow:
 [EMAIL] "Analyze Q4 sales and send report"
@@ -265,7 +291,14 @@ You: "KILL_WORKER: abc123"   ← Use the actual worker ID from [WORKER:abc123]
 
 **IMPORTANT: Always kill workers when done to save costs. Use KILL_WORKER: * to kill all active workers.**
 
-**You're orchestrating AND mentoring Claude workers.** Answer their questions, vet their work, iterate until quality is right.`;
+**You're orchestrating AND mentoring Claude workers.** Answer their questions, vet their work, iterate until quality is right.
+
+## CRITICAL REMINDERS (Read this before EVERY response!)
+1. **EVERY [SMS] REQUIRES SEND_SMS output** - no exceptions!
+2. **EVERY [EMAIL] REQUIRES SEND_EMAIL output** - no exceptions!
+3. **LIST_WORKERS, SPAWN_WORKER, KILL_WORKER are actions, NOT replies!**
+4. **After using info commands, ALWAYS follow up with SEND_SMS/SEND_EMAIL!**
+5. **If you forget to use SEND_SMS/SEND_EMAIL, your reply will NEVER reach the user!**`;
   }
 
   // ============================================================================
@@ -354,9 +387,9 @@ You: "KILL_WORKER: abc123"   ← Use the actual worker ID from [WORKER:abc123]
     // Add platform-specific reminder for SMS
     let platformReminder = '';
     if (message.source === 'SMS') {
-      platformReminder = '\n(REMINDER: You MUST reply using SEND_SMS: <phone> | <message>. Keep message SHORT under 160 chars!)\n';
+      platformReminder = '\n(CRITICAL REMINDER: This requires a SEND_SMS reply! Commands like LIST_WORKERS are NOT replies - you must output SEND_SMS: <phone> | <message>. Keep message SHORT under 160 chars!)\n';
     } else if (message.source === 'EMAIL') {
-      platformReminder = '\n(REMINDER: You MUST reply using SEND_EMAIL: <email> | <subject> | <body>)\n';
+      platformReminder = '\n(CRITICAL REMINDER: This requires a SEND_EMAIL reply! Commands like SPAWN_WORKER are NOT replies - you must output SEND_EMAIL: <email> | <subject> | <body>)\n';
     }
 
     return `${prefix}${platformReminder}\n${message.content}`;
@@ -557,43 +590,46 @@ Begin working on the task now.`;
 
   /**
    * List active workers and send info to conductor.
+   * The conductor will respond to the SYSTEM message, and we need to process that response.
    */
   async listWorkersForConductor(): Promise<void> {
     if (!this.conductorSession || !this.conductorSandbox) return;
 
     const activeWorkers = this.getActiveWorkers();
 
+    let systemMessage: string;
     if (activeWorkers.length === 0) {
       console.log('📋 LIST_WORKERS: No active workers');
+      systemMessage = '[SYSTEM] No active workers currently running.\n(REMINDER: You must now send your reply to the user using SEND_SMS or SEND_EMAIL!)';
+    } else {
+      console.log(`📋 LIST_WORKERS: Found ${activeWorkers.length} active workers`);
 
-      // Send system message to conductor
-      const systemMessage = '[SYSTEM] No active workers currently running.';
-      await this.conductorSandbox.executor.sendToSession(
-        this.conductorSession.id,
-        systemMessage,
-        { timeout: 300000 }
-      );
-      return;
+      // Format worker list concisely
+      const workerList = activeWorkers.map((w, idx) => {
+        const taskPreview = w.task.substring(0, 60) + (w.task.length > 60 ? '...' : '');
+        return `${idx + 1}. [WORKER:${w.id}] - ${taskPreview}`;
+      }).join('\n');
+
+      systemMessage = `[SYSTEM] Active Workers (${activeWorkers.length}):\n${workerList}\n\n(REMINDER: You must now send your reply to the user using SEND_SMS or SEND_EMAIL!)`;
     }
 
-    console.log(`📋 LIST_WORKERS: Found ${activeWorkers.length} active workers`);
-
-    // Format worker list concisely
-    const workerList = activeWorkers.map((w, idx) => {
-      const taskPreview = w.task.substring(0, 60) + (w.task.length > 60 ? '...' : '');
-      return `${idx + 1}. [WORKER:${w.id}] - ${taskPreview}`;
-    }).join('\n');
-
-    const systemMessage = `[SYSTEM] Active Workers (${activeWorkers.length}):\n${workerList}`;
-
-    // Send to conductor
-    await this.conductorSandbox.executor.sendToSession(
+    // Send to conductor and get their response
+    const response = await this.conductorSandbox.executor.sendToSession(
       this.conductorSession.id,
       systemMessage,
       { timeout: 300000 }
     );
 
-    console.log(`   ✅ Sent worker list to conductor`);
+    console.log(`   ✅ Conductor response to LIST_WORKERS: ${response.result.substring(0, 150)}...`);
+
+    // Parse and execute any commands from the conductor's response (should include SEND_SMS/SEND_EMAIL)
+    const commands = this.parseCommands(response.result);
+    if (commands.length > 0) {
+      console.log(`   📤 Executing ${commands.length} command(s) from conductor's response`);
+      await this.executeCommands(commands);
+    } else {
+      console.warn(`   ⚠️  Conductor didn't output any commands after LIST_WORKERS - user won't get a reply!`);
+    }
   }
 
   /**
