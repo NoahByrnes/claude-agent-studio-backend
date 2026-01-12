@@ -48,6 +48,7 @@ export class E2BCLIExecutor {
       console.error(`   Command: ${command}`);
       console.error(`   Stderr: ${result.stderr}`);
       console.error(`   Stdout: ${result.stdout}`);
+      console.error(`   Full result:`, JSON.stringify(result, null, 2));
       throw new Error(`CLI command failed (exit ${result.exitCode}): ${result.stderr || result.stdout || 'Unknown error'}`);
     }
 
