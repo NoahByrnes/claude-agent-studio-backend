@@ -14,7 +14,7 @@ export interface ExecuteOptions {
   timeout?: number;          // ms
   appendSystemPrompt?: string;
   skipPermissions?: boolean; // Skip permission checks (for autonomous workers in sandboxes)
-  model?: string;            // Claude model to use (default: claude-sonnet-4.5)
+  model?: string;            // Claude model to use (default: claude-sonnet-4)
 }
 
 export class E2BCLIExecutor {
@@ -174,8 +174,8 @@ export class E2BCLIExecutor {
   private buildArgs(prompt: string, options: ExecuteOptions): string[] {
     const args: string[] = ['-p']; // Print mode (non-interactive)
 
-    // Model selection (default to Sonnet 4.5)
-    const model = options.model || 'claude-sonnet-4.5';
+    // Model selection (default to Sonnet 4)
+    const model = options.model || 'claude-sonnet-4';
     args.push('--model', model);
 
     // Skip permissions for autonomous workers in sandboxes
