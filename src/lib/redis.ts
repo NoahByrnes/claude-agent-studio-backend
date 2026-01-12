@@ -1,16 +1,24 @@
 import Redis from 'ioredis';
 
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+const redisUrl = process.env.REDIS_URL;
 
-export const redis = new Redis(redisUrl, {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-});
+let redis: Redis | null = null;
 
-redis.on('connect', () => {
-  console.log('✅ Redis connected');
-});
+if (redisUrl) {
+  redis = new Redis(redisUrl, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+  });
 
-redis.on('error', (err) => {
-  console.error('❌ Redis error:', err);
-});
+  redis.on('connect', () => {
+    console.log('✅ Redis connected');
+  });
+
+  redis.on('error', (err) => {
+    console.error('❌ Redis error:', err);
+  });
+} else {
+  console.warn('⚠️  Redis not configured - queues and pub/sub disabled');
+}
+
+export { redis };

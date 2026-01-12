@@ -20,6 +20,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Claude Code CLI globally (v1.1.0+)
+RUN npm install -g @anthropic-ai/claude-code
+
 # Install Playwright system dependencies (for browser automation)
 RUN npx playwright install-deps chromium || true
 
@@ -30,7 +33,7 @@ RUN mkdir -p /workspace/agent-runtime
 COPY package*.json /workspace/agent-runtime/
 COPY tsconfig.json /workspace/agent-runtime/
 
-# Install dependencies (includes Claude Agent SDK)
+# Install dependencies (includes Claude Agent SDK for backward compatibility)
 WORKDIR /workspace/agent-runtime
 RUN npm install
 
@@ -42,7 +45,7 @@ COPY .claude /workspace/agent-runtime/.claude
 COPY server.js /workspace/server.js
 
 # Verify installations
-RUN node --version && npm --version
+RUN node --version && npm --version && claude --version
 
 # Set working directory
 WORKDIR /workspace

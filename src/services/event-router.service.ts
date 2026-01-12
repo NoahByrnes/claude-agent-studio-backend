@@ -19,13 +19,17 @@ export class EventRouterService {
 
     const [savedEvent] = await db.insert(agentEvents).values(newEvent).returning();
 
-    // Add to queue for processing
-    await agentEventsQueue.add('process-event', {
-      eventId: savedEvent.id,
-      agentId: event.agentId,
-      eventType: event.eventType,
-      payload: event.payload,
-    });
+    // Add to queue for processing (if queue is available)
+    if (agentEventsQueue) {
+      await agentEventsQueue.add('process-event', {
+        eventId: savedEvent.id,
+        agentId: event.agentId,
+        eventType: event.eventType,
+        payload: event.payload,
+      });
+    } else {
+      console.warn('⚠️  Event queue not available - event saved but not queued for processing');
+    }
   }
 
   async markEventProcessed(eventId: string): Promise<void> {

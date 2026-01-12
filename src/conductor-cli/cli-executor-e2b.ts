@@ -1,0 +1,149 @@
+/**
+ * E2B CLI Executor
+ *
+ * Executes claude CLI commands inside E2B sandboxes.
+ * Adapted from original CLI executor to work with E2B infrastructure.
+ */
+
+import { Sandbox } from '@e2b/sdk';
+import type { CLIResponse, CLIStreamMessage } from './types.js';
+
+export interface ExecuteOptions {
+  sessionId?: string;        // Resume specific CLI session
+  outputFormat?: 'json' | 'stream-json' | 'text';
+  timeout?: number;          // ms
+  appendSystemPrompt?: string;
+}
+
+export class E2BCLIExecutor {
+  private sandbox: Sandbox;
+
+  constructor(sandbox: Sandbox) {
+    this.sandbox = sandbox;
+  }
+
+  /**
+   * Execute a prompt and get structured response.
+   */
+  async execute(prompt: string, options: ExecuteOptions = {}): Promise<CLIResponse> {
+    const args = this.buildArgs(prompt, { ...options, outputFormat: 'json' });
+    const command = `claude ${args.join(' ')}`;
+
+    const result = await this.sandbox.process.startAndWait({
+      cmd: command,
+      timeout: options.timeout || 300000, // 5 minutes default
+    });
+
+    if (result.exitCode !== 0) {
+      throw new Error(`CLI command failed: ${result.stderr}`);
+    }
+
+    try {
+      return JSON.parse(result.stdout) as CLIResponse;
+    } catch {
+      // If parsing fails, construct a response
+      return {
+        type: 'result',
+        subtype: 'success',
+        session_id: '',
+        total_cost_usd: 0,
+        is_error: false,
+        duration_ms: 0,
+        num_turns: 1,
+        result: result.stdout,
+      };
+    }
+  }
+
+  /**
+   * Execute and stream all messages.
+   * Note: Streaming in E2B is limited - we get full output at end.
+   * For true streaming, use WebSocket to E2B sandbox.
+   */
+  async *executeStream(
+    prompt: string,
+    options: ExecuteOptions = {}
+  ): AsyncGenerator<CLIStreamMessage> {
+    const args = this.buildArgs(prompt, { ...options, outputFormat: 'stream-json' });
+    const command = `claude ${args.join(' ')}`;
+
+    // Start process (won't block)
+    const proc = await this.sandbox.process.start({
+      cmd: command,
+    });
+
+    // For now, wait and parse output
+    // TODO: Implement true streaming via E2B WebSocket
+    const result = await proc.wait();
+
+    if (result.exitCode !== 0) {
+      throw new Error(`CLI command failed: ${result.stderr}`);
+    }
+
+    // Parse NDJSON output
+    const lines = result.stdout.split('\n');
+    for (const line of lines) {
+      if (line.trim()) {
+        try {
+          yield JSON.parse(line) as CLIStreamMessage;
+        } catch {
+          // Skip non-JSON lines
+        }
+      }
+    }
+  }
+
+  /**
+   * Start a new CLI session and return its ID.
+   */
+  async startSession(systemPrompt: string, options: ExecuteOptions = {}): Promise<string> {
+    const response = await this.execute(systemPrompt, options);
+    return response.session_id;
+  }
+
+  /**
+   * Send a message to an existing CLI session.
+   */
+  async sendToSession(
+    sessionId: string,
+    message: string,
+    options: ExecuteOptions = {}
+  ): Promise<CLIResponse> {
+    return this.execute(message, { ...options, sessionId });
+  }
+
+  /**
+   * Build CLI arguments.
+   */
+  private buildArgs(prompt: string, options: ExecuteOptions): string[] {
+    const args: string[] = ['-p']; // Print mode (non-interactive)
+
+    // Resume session if specified
+    if (options.sessionId) {
+      args.push('--resume', options.sessionId);
+    }
+
+    // Output format
+    if (options.outputFormat) {
+      args.push('--output-format', options.outputFormat);
+    }
+
+    // Append system prompt
+    if (options.appendSystemPrompt) {
+      args.push('--append-system-prompt', options.appendSystemPrompt);
+    }
+
+    // The prompt itself (escape for shell)
+    const escaped = prompt.replace(/'/g, "'\"'\"'");
+    args.push(`'${escaped}'`);
+
+    return args;
+  }
+
+  /**
+   * Get the E2B sandbox this executor is using.
+   */
+  getSandbox(): Sandbox {
+    return this.sandbox;
+  }
+}

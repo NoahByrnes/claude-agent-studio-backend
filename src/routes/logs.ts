@@ -57,10 +57,18 @@ export async function logRoutes(fastify: FastifyInstance) {
 
       console.log(`WebSocket connected for agent ${agentId}`);
 
-      // Create Redis subscriber
-      const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-      const subscriber = new Redis(redisUrl);
-      const channel = `agent:${agentId}:logs`;
+      // Create Redis subscriber (if Redis is configured)
+      const redisUrl = process.env.REDIS_URL;
+      let subscriber: Redis | null = null;
+      let channel = '';
+
+      if (redisUrl) {
+        subscriber = new Redis(redisUrl);
+        channel = `agent:${agentId}:logs`;
+        await subscriber.subscribe(channel);
+      } else {
+        console.warn(`⚠️  Redis not configured - real-time log streaming disabled for agent ${agentId}`);
+      }
 
       // Send initial logs
       auditService.getRecentLogs(agentId, 50).then((logs) => {
@@ -72,24 +80,23 @@ export async function logRoutes(fastify: FastifyInstance) {
         );
       });
 
-      // Subscribe to Redis channel for new logs
-      await subscriber.subscribe(channel);
-
-      subscriber.on('message', (chan, message) => {
-        if (chan === channel) {
-          try {
-            const log = JSON.parse(message);
-            connection.send(
-              JSON.stringify({
-                type: 'log',
-                log,
-              })
-            );
-          } catch (err) {
-            console.error('Error parsing log message:', err);
+      if (subscriber) {
+        subscriber.on('message', (chan, message) => {
+          if (chan === channel) {
+            try {
+              const log = JSON.parse(message);
+              connection.send(
+                JSON.stringify({
+                  type: 'log',
+                  log,
+                })
+              );
+            } catch (err) {
+              console.error('Error parsing log message:', err);
+            }
           }
-        }
-      });
+        });
+      }
 
       // Send heartbeat every 30 seconds
       const interval = setInterval(() => {
@@ -108,8 +115,10 @@ export async function logRoutes(fastify: FastifyInstance) {
       connection.on('close', () => {
         console.log(`WebSocket disconnected for agent ${agentId}`);
         clearInterval(interval);
-        subscriber.unsubscribe(channel);
-        subscriber.quit();
+        if (subscriber) {
+          subscriber.unsubscribe(channel);
+          subscriber.quit();
+        }
       });
     }
   );

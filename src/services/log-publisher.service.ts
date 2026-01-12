@@ -2,20 +2,27 @@ import { Redis } from 'ioredis';
 import type { AuditLog } from '../../db/schema.js';
 
 export class LogPublisherService {
-  private redis: Redis;
+  private redis: Redis | null = null;
   private static instance: LogPublisherService;
+  private enabled: boolean = false;
 
   private constructor() {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-    this.redis = new Redis(redisUrl);
+    const redisUrl = process.env.REDIS_URL;
 
-    this.redis.on('error', (err) => {
-      console.error('Redis publisher error:', err);
-    });
+    if (redisUrl) {
+      this.redis = new Redis(redisUrl);
+      this.enabled = true;
 
-    this.redis.on('connect', () => {
-      console.log('✅ Redis publisher connected');
-    });
+      this.redis.on('error', (err) => {
+        console.error('Redis publisher error:', err);
+      });
+
+      this.redis.on('connect', () => {
+        console.log('✅ Redis publisher connected');
+      });
+    } else {
+      console.warn('⚠️  Redis not configured - log publishing disabled');
+    }
   }
 
   static getInstance(): LogPublisherService {
@@ -26,6 +33,10 @@ export class LogPublisherService {
   }
 
   async publishLog(log: AuditLog): Promise<void> {
+    if (!this.enabled || !this.redis) {
+      return; // Silently skip if Redis not configured
+    }
+
     try {
       const channel = `agent:${log.agent_id}:logs`;
       await this.redis.publish(channel, JSON.stringify(log));
@@ -35,6 +46,8 @@ export class LogPublisherService {
   }
 
   async close(): Promise<void> {
-    await this.redis.quit();
+    if (this.redis) {
+      await this.redis.quit();
+    }
   }
 }

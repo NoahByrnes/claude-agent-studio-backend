@@ -9,8 +9,10 @@ export class SessionService {
   }
 
   async saveSession(agentId: string, sessionId: string, state: Record<string, unknown>): Promise<Session> {
-    // Save to Redis for fast access
-    await redis.set(this.getRedisKey(agentId), JSON.stringify({ sessionId, state }), 'EX', 3600);
+    // Save to Redis for fast access (if available)
+    if (redis) {
+      await redis.set(this.getRedisKey(agentId), JSON.stringify({ sessionId, state }), 'EX', 3600);
+    }
 
     // Also save to database for persistence
     const [existing] = await db
@@ -41,10 +43,12 @@ export class SessionService {
   }
 
   async getSession(agentId: string): Promise<{ sessionId: string; state: Record<string, unknown> } | null> {
-    // Try Redis first
-    const cached = await redis.get(this.getRedisKey(agentId));
-    if (cached) {
-      return JSON.parse(cached);
+    // Try Redis first (if available)
+    if (redis) {
+      const cached = await redis.get(this.getRedisKey(agentId));
+      if (cached) {
+        return JSON.parse(cached);
+      }
     }
 
     // Fallback to database
@@ -59,8 +63,10 @@ export class SessionService {
         state: session.state as Record<string, unknown>,
       };
 
-      // Warm up Redis cache
-      await redis.set(this.getRedisKey(agentId), JSON.stringify(result), 'EX', 3600);
+      // Warm up Redis cache (if available)
+      if (redis) {
+        await redis.set(this.getRedisKey(agentId), JSON.stringify(result), 'EX', 3600);
+      }
 
       return result;
     }
@@ -69,7 +75,9 @@ export class SessionService {
   }
 
   async deleteSession(agentId: string): Promise<void> {
-    await redis.del(this.getRedisKey(agentId));
+    if (redis) {
+      await redis.del(this.getRedisKey(agentId));
+    }
     await db.delete(sessions).where(eq(sessions.agent_id, agentId));
   }
 }
