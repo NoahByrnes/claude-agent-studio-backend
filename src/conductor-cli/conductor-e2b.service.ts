@@ -434,9 +434,10 @@ You: "KILL_WORKER: abc123"   ← Use the actual worker ID from [WORKER:abc123]
             conductorId: this.conductorSession.id,
             type: 'cli-session',
           },
-          // No auto-timeout - conductor controls worker lifecycle
-          // Workers run until explicitly killed with KILL_WORKER command
-          timeoutMs: 0,
+          // Workers can run for 2 hours max (longer than conductor for complex tasks)
+          // Conductor should kill them earlier with KILL_WORKER when done
+          // Note: E2B doesn't support timeoutMs: 0, needs explicit value
+          timeoutMs: 2 * 60 * 60 * 1000, // 2 hours
           // Allow 5 minutes for sandbox creation (same as conductor)
           requestTimeoutMs: 300000,
         });
