@@ -68,11 +68,13 @@ export class ConductorE2BService {
     let lastError: Error | undefined;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      let sandbox: Sandbox | undefined;
+
       try {
         console.log(`🎯 Creating conductor E2B sandbox (attempt ${attempt}/${maxRetries})...`);
 
         // Create E2B sandbox for conductor (long-lived)
-        const sandbox = await Sandbox.create(this.config.e2bTemplateId, {
+        sandbox = await Sandbox.create(this.config.e2bTemplateId, {
           apiKey: this.config.e2bApiKey,
           metadata: {
             role: 'conductor',
@@ -122,6 +124,18 @@ export class ConductorE2BService {
         console.error(`   Error stack:`, lastError.stack);
         console.error(`   Full error object:`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
         console.warn(`⚠️  Attempt ${attempt}/${maxRetries} failed:`, lastError.message);
+
+        // Clean up the failed sandbox before retrying
+        if (sandbox) {
+          try {
+            console.log(`🧹 Cleaning up failed sandbox: ${sandbox.sandboxId}`);
+            await sandbox.kill();
+            console.log(`   ✅ Sandbox killed successfully`);
+          } catch (killError: any) {
+            console.warn(`   ⚠️  Failed to kill sandbox: ${killError.message}`);
+            // Continue anyway - the sandbox will timeout eventually
+          }
+        }
 
         // If we have more retries, wait before trying again
         if (attempt < maxRetries) {
