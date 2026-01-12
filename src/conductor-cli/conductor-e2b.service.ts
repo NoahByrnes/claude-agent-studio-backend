@@ -7,6 +7,10 @@
 
 import { Sandbox } from 'e2b';
 import { E2BCLIExecutor } from './cli-executor-e2b.js';
+import {
+  importMemoryToSandbox,
+  exportMemoryFromSandbox,
+} from '../services/memory.service.js';
 import type {
   ConductorSession,
   WorkerSession,
@@ -79,6 +83,9 @@ export class ConductorE2BService {
 
         // Wait for Claude CLI to be available
         await this.waitForCLI(sandbox);
+
+        // Import memory from previous sessions (if exists)
+        await importMemoryToSandbox(sandbox, 'conductor');
 
         const executor = new E2BCLIExecutor(sandbox);
 
@@ -240,7 +247,29 @@ You: "KILL_WORKER: w1"
     const commands = this.parseCommands(response.result);
     await this.executeCommands(commands);
 
+    // Export memory after each conversation (async, don't await)
+    this.exportMemory().catch((error) => {
+      console.error('⚠️  Failed to export memory:', error.message);
+    });
+
     return response;
+  }
+
+  /**
+   * Export conductor memory to persistent storage.
+   * Called automatically after each conversation.
+   */
+  private async exportMemory(): Promise<void> {
+    if (!this.conductorSandbox) {
+      return;
+    }
+
+    try {
+      await exportMemoryFromSandbox(this.conductorSandbox.sandbox, 'conductor');
+    } catch (error: any) {
+      console.error('❌ Memory export failed:', error.message);
+      // Don't throw - memory export is not critical
+    }
   }
 
   /**
