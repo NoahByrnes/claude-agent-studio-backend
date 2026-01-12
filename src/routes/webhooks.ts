@@ -50,7 +50,7 @@ async function initConductor() {
       onSendEmail: async (to, subject, body) => {
         console.log(`📧 Sending email to ${to}: ${subject}`);
         try {
-          await sendEmail(to, subject, body);
+          await sendEmail(to, subject, body, undefined, 'default-user');
         } catch (error: any) {
           console.error(`❌ Failed to send email: ${error.message}`);
         }
@@ -58,7 +58,7 @@ async function initConductor() {
       onSendSMS: async (to, message) => {
         console.log(`📱 Sending SMS to ${to}`);
         try {
-          await sendSMS(to, message);
+          await sendSMS(to, message, 'default-user');
         } catch (error: any) {
           console.error(`❌ Failed to send SMS: ${error.message}`);
         }
