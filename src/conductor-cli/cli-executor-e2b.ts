@@ -33,8 +33,9 @@ export class E2BCLIExecutor {
     const args = this.buildArgs(prompt, { ...options, outputFormat: 'json' });
     const command = `claude ${args.join(' ')}`;
 
-    // Default timeout: 10 minutes for workers doing research/complex tasks
-    const timeout = options.timeout || 600000;
+    // Default timeout: 30 minutes for workers doing research/complex tasks
+    // E2B Hobby tier allows up to 1 hour max
+    const timeout = options.timeout || 1800000; // 30 minutes
 
     let result;
     try {
@@ -97,10 +98,11 @@ export class E2BCLIExecutor {
     const args = this.buildArgs(prompt, { ...options, outputFormat: 'stream-json' });
     const command = `claude ${args.join(' ')}`;
 
-    console.log(`   🚀 Starting CLI stream command with timeout ${options.timeout || 600000}ms`);
+    // Default timeout: 30 minutes for workers doing research/complex tasks
+    // E2B Hobby tier allows up to 1 hour max
+    const timeout = options.timeout || 1800000; // 30 minutes
 
-    // Default timeout: 10 minutes for workers doing research/complex tasks
-    const timeout = options.timeout || 600000;
+    console.log(`   🚀 Starting CLI stream command with timeout ${timeout}ms (${timeout / 60000} minutes)`);
 
     // Start command in background
     const handle = await this.sandbox.commands.run(command, {

@@ -575,7 +575,7 @@ Begin working on the task now.`;
     for await (const message of executor.executeStream(workerPrompt, {
       outputFormat: 'stream-json',
       skipPermissions: true,
-      timeout: 600000,
+      timeout: 1800000, // 30 minutes for complex research tasks
     })) {
       messageCount++;
       console.log(`   📨 Worker stream message ${messageCount}: type=${message.type}`);
