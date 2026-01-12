@@ -590,6 +590,13 @@ Begin working on the task now.`;
   }
 
   /**
+   * Get active workers (running status only).
+   */
+  getActiveWorkers(): WorkerSession[] {
+    return Array.from(this.workerSessions.values()).filter(w => w.status === 'running');
+  }
+
+  /**
    * Check if conductor is initialized.
    */
   isInitialized(): boolean {

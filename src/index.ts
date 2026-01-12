@@ -4,9 +4,10 @@ import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import { agentRoutes } from './routes/agents.js';
 import { logRoutes } from './routes/logs.js';
-import { webhookRoutes } from './routes/webhooks.js';
+import { webhookRoutes, getConductorService } from './routes/webhooks.js';
 import { internalRoutes } from './routes/internal.js';
 import { sandboxRoutes } from './routes/sandbox.js';
+import { monitoringRoutes, setConductorServiceGetter } from './routes/monitoring.js';
 // Worker disabled until Redis is configured
 // import './workers/event-processor.worker.js';
 
@@ -31,10 +32,14 @@ fastify.get('/health', async () => {
   return { status: 'ok', timestamp: new Date().toISOString() };
 });
 
+// Set up monitoring to access conductor service
+setConductorServiceGetter(getConductorService);
+
 // Register routes
 await fastify.register(agentRoutes);
 await fastify.register(logRoutes);
 await fastify.register(webhookRoutes);
+await fastify.register(monitoringRoutes);
 await fastify.register(internalRoutes);
 await fastify.register(sandboxRoutes);
 

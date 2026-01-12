@@ -12,6 +12,14 @@ import type { IncomingMessage } from '../conductor-cli/types.js';
 // Global conductor instance (initialized on first webhook)
 let conductorService: ConductorE2BService | null = null;
 
+/**
+ * Get the global conductor service instance.
+ * Used by monitoring routes to access conductor status.
+ */
+export function getConductorService(): ConductorE2BService | null {
+  return conductorService;
+}
+
 async function initConductor() {
   if (conductorService && conductorService.isInitialized()) {
     return conductorService;
