@@ -332,6 +332,53 @@ You: "KILL_WORKER: abc123"   ← Use the actual worker ID from [WORKER:abc123]
 
 **You're orchestrating AND mentoring Claude workers.** Answer their questions, vet their work, iterate until quality is right.
 
+## Worker Monitoring & Lifecycle Management
+**You manage worker lifecycle like a human manager would:**
+
+Workers don't have hard timeouts - they work as long as needed. But you should monitor them:
+
+1. **After spawning a worker**: They immediately start working. You'll receive their updates via [WORKER:id] messages.
+
+2. **If a worker goes silent for 15-20+ minutes with no updates:**
+   - Use LIST_WORKERS to check if they're still active
+   - The system shows "Last Activity" timestamp for each worker
+   - If no recent activity, the worker may be stuck or waiting
+
+3. **How to check in on a silent worker:**
+   - Send them a follow-up message asking for status: "Hey, checking in - how's the research going? Any progress to report?"
+   - Workers can respond to your messages and will update you on progress
+   - If they don't respond after checking in, they may be stuck
+
+4. **When to kill a worker:**
+   - Task is complete and you've sent results to the user
+   - Worker appears stuck (no activity for 20+ min, no response to check-ins)
+   - User explicitly asks to stop/cancel the task
+   - Worker reports being blocked and unable to proceed
+
+5. **When NOT to kill a worker:**
+   - Research tasks that naturally take time (20-40 minutes is normal)
+   - Tasks with intermittent progress (searching, testing, installing packages)
+   - Worker is actively responding to your messages
+   - You just spawned them (give them at least 5-10 minutes to make progress)
+
+**Think like a human manager**: Would you fire someone for taking 30 minutes on a complex research task? No. But would you check in if they haven't given an update in 20 minutes? Yes.
+
+**Example - checking on a silent worker:**
+You spawned a worker 25 minutes ago to research something, but haven't heard from them...
+
+You: "LIST_WORKERS"
+[SYSTEM] Active Workers (1):
+1. [WORKER:abc123] - Research computer use API (Last Activity: 22 minutes ago)
+
+You: "Hey abc123, checking in - been 20+ min with no updates. How's the research going? Found anything useful yet?"
+
+[WORKER:abc123] "Yes! Found good documentation, just compiling my findings now. Will have results in 5 min."
+
+You: "Perfect, take your time."
+
+[5 minutes later]
+[WORKER:abc123] "Research complete! Here's what I found..."
+
 ## CRITICAL REMINDERS (Read this before EVERY response!)
 1. **EVERY [SMS] REQUIRES SEND_SMS output** - no exceptions!
 2. **EVERY [EMAIL] REQUIRES SEND_EMAIL output** - no exceptions!
@@ -575,7 +622,7 @@ Begin working on the task now.`;
     for await (const message of executor.executeStream(workerPrompt, {
       outputFormat: 'stream-json',
       skipPermissions: true,
-      timeout: 1800000, // 30 minutes for complex research tasks
+      // No explicit timeout - conductor manages worker lifecycle
     })) {
       messageCount++;
       console.log(`   📨 Worker stream message ${messageCount}: type=${message.type}`);
@@ -750,7 +797,7 @@ Begin working on the task now.`;
             conductorResponse.result,
             {
               skipPermissions: true, // Workers run autonomously
-              timeout: 600000 // 10 minutes for worker tasks
+              // No explicit timeout - conductor manages worker lifecycle
             }
           );
         } else {
@@ -784,10 +831,12 @@ Begin working on the task now.`;
     } else {
       console.log(`📋 LIST_WORKERS: Found ${activeWorkers.length} active workers`);
 
-      // Format worker list concisely
+      // Format worker list with last activity timestamps
       const workerList = activeWorkers.map((w, idx) => {
         const taskPreview = w.task.substring(0, 60) + (w.task.length > 60 ? '...' : '');
-        return `${idx + 1}. [WORKER:${w.id}] - ${taskPreview}`;
+        const minutesAgo = Math.floor((Date.now() - w.lastActivityAt.getTime()) / 60000);
+        const activityStr = minutesAgo === 0 ? 'Active now' : `${minutesAgo} min ago`;
+        return `${idx + 1}. [WORKER:${w.id}] - ${taskPreview} (Last Activity: ${activityStr})`;
       }).join('\n');
 
       systemMessage = `[SYSTEM] Active Workers (${activeWorkers.length}):\n${workerList}\n\n(REMINDER: You must now send your reply to the user using SEND_SMS or SEND_EMAIL!)`;
