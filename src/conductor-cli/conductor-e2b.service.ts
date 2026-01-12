@@ -138,23 +138,29 @@ export class ConductorE2BService {
    */
   private async waitForCLI(sandbox: Sandbox, timeoutMs: number = 30000): Promise<void> {
     const startTime = Date.now();
+    let attemptCount = 0;
+
+    console.log(`   ⏳ Waiting for Claude CLI in sandbox ${sandbox.sandboxId}... (timeout: ${timeoutMs / 1000}s)`);
 
     while (Date.now() - startTime < timeoutMs) {
+      attemptCount++;
       try {
-        const result = await sandbox.commands.run('which claude');
+        const result = await sandbox.commands.run('which claude', { timeoutMs: 5000 });
 
         if (result.exitCode === 0) {
-          console.log('   ✅ Claude CLI ready');
+          console.log(`   ✅ Claude CLI ready (took ${attemptCount} attempts, ${Math.round((Date.now() - startTime) / 1000)}s)`);
           return;
+        } else {
+          console.log(`   ⏳ Attempt ${attemptCount}: Claude CLI not found yet (exit code ${result.exitCode})`);
         }
-      } catch (error) {
-        // CLI not ready yet
+      } catch (error: any) {
+        console.log(`   ⏳ Attempt ${attemptCount}: Error checking CLI: ${error.message}`);
       }
 
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Check every 2 seconds
     }
 
-    throw new Error('Timeout waiting for Claude CLI to be ready');
+    throw new Error(`Timeout waiting for Claude CLI to be ready after ${attemptCount} attempts (${Math.round((Date.now() - startTime) / 1000)}s)`);
   }
 
   /**
@@ -409,27 +415,69 @@ You: "KILL_WORKER: abc123"   ← Use the actual worker ID from [WORKER:abc123]
 
     console.log(`🔨 Spawning worker for task: ${task.substring(0, 100)}...`);
 
-    // Create E2B sandbox for worker (lives until explicitly killed)
-    const sandbox = await Sandbox.create(this.config.e2bTemplateId, {
-      apiKey: this.config.e2bApiKey,
-      metadata: {
-        role: 'worker',
-        conductorId: this.conductorSession.id,
-        type: 'cli-session',
-      },
-      // No auto-timeout - conductor controls worker lifecycle
-      // Workers run until explicitly killed with KILL_WORKER command
-      timeoutMs: 0,
-      // Allow 5 minutes for sandbox creation
-      requestTimeoutMs: 300000,
-    });
+    // Create worker sandbox with retry logic (same as conductor)
+    const maxRetries = 3;
+    let lastError: Error | undefined;
+    let sandbox: Sandbox | undefined;
+    let executor: E2BCLIExecutor | undefined;
 
-    console.log(`   ✅ Worker sandbox created: ${sandbox.sandboxId}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`   🎯 Creating worker E2B sandbox (attempt ${attempt}/${maxRetries})...`);
 
-    // Wait for CLI
-    await this.waitForCLI(sandbox);
+        // Create E2B sandbox for worker (lives until explicitly killed)
+        // Uses SAME template and settings as conductor
+        sandbox = await Sandbox.create(this.config.e2bTemplateId, {
+          apiKey: this.config.e2bApiKey,
+          metadata: {
+            role: 'worker',
+            conductorId: this.conductorSession.id,
+            type: 'cli-session',
+          },
+          // No auto-timeout - conductor controls worker lifecycle
+          // Workers run until explicitly killed with KILL_WORKER command
+          timeoutMs: 0,
+          // Allow 5 minutes for sandbox creation (same as conductor)
+          requestTimeoutMs: 300000,
+        });
 
-    const executor = new E2BCLIExecutor(sandbox, process.env.ANTHROPIC_API_KEY);
+        console.log(`   ✅ Worker sandbox created: ${sandbox.sandboxId}`);
+
+        // Wait for CLI (same timeout as conductor - they use same template)
+        await this.waitForCLI(sandbox);
+
+        executor = new E2BCLIExecutor(sandbox, process.env.ANTHROPIC_API_KEY);
+
+        // Success - break out of retry loop
+        break;
+
+      } catch (error) {
+        lastError = error as Error;
+        console.warn(`   ⚠️  Worker creation attempt ${attempt}/${maxRetries} failed:`, lastError.message);
+
+        // Clean up failed sandbox if it was created
+        if (sandbox) {
+          try {
+            await sandbox.kill();
+          } catch (cleanupError) {
+            console.warn(`   ⚠️  Failed to cleanup sandbox:`, cleanupError);
+          }
+        }
+
+        // If we have more retries, wait before trying again
+        if (attempt < maxRetries) {
+          const waitTime = attempt * 5000; // Exponential backoff: 5s, 10s
+          console.log(`   ⏳ Retrying in ${waitTime / 1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+    }
+
+    if (!sandbox || !executor) {
+      throw new Error(
+        `Failed to create worker after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`
+      );
+    }
 
     // Start worker CLI session with initial task
     const workerPrompt = `You are an autonomous WORKER agent. A conductor has delegated a task to you.
