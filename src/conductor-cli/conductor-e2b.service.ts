@@ -15,6 +15,7 @@ import {
   deliverFilesFromSandbox,
   parseDeliverFileCommand,
 } from '../services/file-delivery.service.js';
+import { addCLIOutput } from '../routes/monitoring.js';
 import type {
   ConductorSession,
   WorkerSession,
@@ -283,6 +284,15 @@ You: "KILL_WORKER: abc123"   ← Use the actual worker ID from [WORKER:abc123]
 
     console.log(`📨 Sending to conductor: ${formattedMessage.substring(0, 100)}...`);
 
+    // Capture incoming message to CLI feed
+    addCLIOutput({
+      timestamp: new Date(),
+      source: 'conductor',
+      sourceId: this.conductorSession.id,
+      content: formattedMessage,
+      type: 'input',
+    });
+
     const response = await this.conductorSandbox.executor.sendToSession(
       this.conductorSession.id,
       formattedMessage,
@@ -296,6 +306,15 @@ You: "KILL_WORKER: abc123"   ← Use the actual worker ID from [WORKER:abc123]
     this.events.onConductorOutput?.(response.result, response);
 
     console.log(`💬 Conductor response: ${response.result.substring(0, 200)}...`);
+
+    // Capture conductor output to CLI feed
+    addCLIOutput({
+      timestamp: new Date(),
+      source: 'conductor',
+      sourceId: this.conductorSession.id,
+      content: response.result,
+      type: 'output',
+    });
 
     // Parse response for commands
     const commands = this.parseCommands(response.result);
@@ -410,6 +429,15 @@ Begin working on the task now.`;
 
     console.log(`   ✅ Worker ${workerId} started, received initial response`);
 
+    // Capture initial worker task to CLI feed
+    addCLIOutput({
+      timestamp: new Date(),
+      source: 'worker',
+      sourceId: workerId,
+      content: `[NEW WORKER TASK]: ${task}`,
+      type: 'system',
+    });
+
     const workerSession: WorkerSession = {
       id: workerId,
       role: 'worker',
@@ -444,6 +472,15 @@ Begin working on the task now.`;
     let conversationActive = true;
 
     while (conversationActive) {
+      // Capture worker output to CLI feed
+      addCLIOutput({
+        timestamp: new Date(),
+        source: 'worker',
+        sourceId: workerId,
+        content: currentWorkerResponse.result,
+        type: 'output',
+      });
+
       // Format worker's message for conductor
       const workerMessage = `[WORKER:${workerId}]\n${currentWorkerResponse.result}`;
       console.log(`   📥 Worker → Conductor: ${currentWorkerResponse.result.substring(0, 150)}...`);
@@ -483,6 +520,15 @@ Begin working on the task now.`;
       if (commands.length === 0 || !commands.some(cmd => cmd.type === 'spawn-worker')) {
         // Send conductor's message to worker
         console.log(`   📤 Conductor → Worker: ${conductorResponse.result.substring(0, 100)}...`);
+
+        // Capture conductor's message to worker in CLI feed
+        addCLIOutput({
+          timestamp: new Date(),
+          source: 'worker',
+          sourceId: workerId,
+          content: `[CONDUCTOR → WORKER]: ${conductorResponse.result}`,
+          type: 'input',
+        });
 
         const sandboxInfo = this.workerSandboxes.get(workerId);
         if (sandboxInfo) {

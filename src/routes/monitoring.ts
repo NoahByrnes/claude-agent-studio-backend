@@ -16,6 +16,37 @@ export function setConductorServiceGetter(getter: () => any) {
   getConductorService = getter;
 }
 
+// CLI Output Buffer - stores recent CLI messages for the feed
+interface CLIMessage {
+  timestamp: Date;
+  source: 'conductor' | 'worker';
+  sourceId: string;
+  content: string;
+  type: 'input' | 'output' | 'system';
+}
+
+const cliOutputBuffer: CLIMessage[] = [];
+const MAX_BUFFER_SIZE = 500; // Keep last 500 messages
+
+// WebSocket clients for real-time CLI feed broadcasting
+const cliWebSocketClients = new Set<(message: CLIMessage) => void>();
+
+export function addCLIOutput(message: CLIMessage) {
+  cliOutputBuffer.push(message);
+  if (cliOutputBuffer.length > MAX_BUFFER_SIZE) {
+    cliOutputBuffer.shift(); // Remove oldest
+  }
+
+  // Broadcast to all connected WebSocket clients
+  for (const broadcast of cliWebSocketClients) {
+    try {
+      broadcast(message);
+    } catch (error) {
+      // Client disconnected or error - will be cleaned up on 'close' event
+    }
+  }
+}
+
 export async function monitoringRoutes(fastify: FastifyInstance) {
 
   /**
@@ -200,5 +231,62 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
   fastify.get('/api/monitoring/connectors', async (request, reply) => {
     const status = getMessagingStatus();
     return reply.send(status);
+  });
+
+  /**
+   * GET /api/monitoring/cli-feed
+   * Get recent CLI output from conductor and workers
+   */
+  fastify.get('/api/monitoring/cli-feed', async (request, reply) => {
+    try {
+      const { limit } = request.query as { limit?: string };
+      const maxMessages = limit ? parseInt(limit) : 100;
+
+      // Return most recent messages
+      const messages = cliOutputBuffer.slice(-maxMessages);
+
+      return reply.send({
+        messages,
+        count: messages.length,
+        totalBuffered: cliOutputBuffer.length,
+      });
+    } catch (error: any) {
+      return reply.code(500).send({
+        error: 'Failed to get CLI feed',
+        message: error.message,
+      });
+    }
+  });
+
+  /**
+   * WebSocket /api/monitoring/cli-feed/stream
+   * Real-time CLI output stream
+   */
+  fastify.get('/api/monitoring/cli-feed/stream', { websocket: true }, (socket, req) => {
+    console.log('📡 CLI feed WebSocket client connected');
+
+    // Send initial buffer
+    socket.send(JSON.stringify({
+      type: 'history',
+      messages: cliOutputBuffer.slice(-50), // Last 50 messages
+    }));
+
+    // Store connection for broadcasting
+    const broadcast = (message: CLIMessage) => {
+      if (socket.readyState === 1) { // OPEN
+        socket.send(JSON.stringify({
+          type: 'message',
+          data: message,
+        }));
+      }
+    };
+
+    // Add to global broadcasters
+    cliWebSocketClients.add(broadcast);
+
+    socket.on('close', () => {
+      console.log('📡 CLI feed WebSocket client disconnected');
+      cliWebSocketClients.delete(broadcast);
+    });
   });
 }
