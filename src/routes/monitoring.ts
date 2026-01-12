@@ -6,6 +6,7 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import { getMessagingStatus } from '../services/messaging.service.js';
 
 // Reference to global conductor service (initialized in webhooks.ts)
 // We'll import the singleton instance
@@ -190,5 +191,14 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
       conductor: isHealthy ? 'online' : 'offline',
       timestamp: new Date().toISOString(),
     });
+  });
+
+  /**
+   * GET /api/monitoring/connectors
+   * Check messaging connectors configuration status
+   */
+  fastify.get('/api/monitoring/connectors', async (request, reply) => {
+    const status = getMessagingStatus();
+    return reply.send(status);
   });
 }

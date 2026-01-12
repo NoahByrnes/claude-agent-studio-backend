@@ -8,6 +8,7 @@
 import type { FastifyInstance } from 'fastify';
 import { ConductorE2BService } from '../conductor-cli/conductor-e2b.service.js';
 import type { IncomingMessage } from '../conductor-cli/types.js';
+import { sendEmail, sendSMS } from '../services/messaging.service.js';
 
 // Global conductor instance (initialized on first webhook)
 let conductorService: ConductorE2BService | null = null;
@@ -47,12 +48,20 @@ async function initConductor() {
         console.log(`🔨 Worker spawned: ${workerId}`);
       },
       onSendEmail: async (to, subject, body) => {
-        console.log(`📧 TODO: Send email to ${to}: ${subject}`);
-        // TODO: Integrate with email service
+        console.log(`📧 Sending email to ${to}: ${subject}`);
+        try {
+          await sendEmail(to, subject, body);
+        } catch (error: any) {
+          console.error(`❌ Failed to send email: ${error.message}`);
+        }
       },
       onSendSMS: async (to, message) => {
-        console.log(`📱 TODO: Send SMS to ${to}`);
-        // TODO: Integrate with SMS service
+        console.log(`📱 Sending SMS to ${to}`);
+        try {
+          await sendSMS(to, message);
+        } catch (error: any) {
+          console.error(`❌ Failed to send SMS: ${error.message}`);
+        }
       },
       onError: (error) => {
         console.error('❌ Conductor error:', error);
