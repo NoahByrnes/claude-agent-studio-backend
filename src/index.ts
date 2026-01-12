@@ -18,7 +18,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 const fastify = Fastify({
   logger: {
-    level: process.env.LOG_LEVEL || 'info',
+    level: process.env.LOG_LEVEL || 'warn', // Reduced from 'info' to reduce log clutter
   },
 });
 
