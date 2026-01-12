@@ -44,7 +44,11 @@ export class E2BCLIExecutor {
     });
 
     if (result.exitCode !== 0) {
-      throw new Error(`CLI command failed: ${result.stderr}`);
+      console.error(`❌ CLI command failed with exit code ${result.exitCode}`);
+      console.error(`   Command: ${command}`);
+      console.error(`   Stderr: ${result.stderr}`);
+      console.error(`   Stdout: ${result.stdout}`);
+      throw new Error(`CLI command failed (exit ${result.exitCode}): ${result.stderr || result.stdout || 'Unknown error'}`);
     }
 
     try {
@@ -92,7 +96,11 @@ export class E2BCLIExecutor {
     const result = await handle.wait();
 
     if (result.exitCode !== 0) {
-      throw new Error(`CLI command failed: ${result.stderr}`);
+      console.error(`❌ CLI stream command failed with exit code ${result.exitCode}`);
+      console.error(`   Command: ${command}`);
+      console.error(`   Stderr: ${result.stderr}`);
+      console.error(`   Stdout: ${result.stdout}`);
+      throw new Error(`CLI command failed (exit ${result.exitCode}): ${result.stderr || result.stdout || 'Unknown error'}`);
     }
 
     // Parse NDJSON output
