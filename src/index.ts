@@ -2,6 +2,7 @@ import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
+import formbody from '@fastify/formbody';
 import { agentRoutes } from './routes/agents.js';
 import { logRoutes } from './routes/logs.js';
 import { webhookRoutes, getConductorService } from './routes/webhooks.js';
@@ -27,6 +28,7 @@ await fastify.register(cors, {
 });
 
 await fastify.register(websocket);
+await fastify.register(formbody);
 
 // Health check
 fastify.get('/health', async () => {
