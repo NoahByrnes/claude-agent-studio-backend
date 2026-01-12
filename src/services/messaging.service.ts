@@ -6,6 +6,7 @@
 
 import sgMail from '@sendgrid/mail';
 import twilio from 'twilio';
+import { getEffectiveConnectorConfig } from './config.service.js';
 
 // Initialize SendGrid
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
@@ -39,16 +40,23 @@ export async function sendEmail(
   to: string,
   subject: string,
   body: string,
-  attachments?: Array<{ filename: string; content: string; type?: string }>
+  attachments?: Array<{ filename: string; content: string; type?: string }>,
+  userId?: string
 ): Promise<void> {
-  if (!SENDGRID_API_KEY) {
-    throw new Error('SendGrid not configured. Set SENDGRID_API_KEY environment variable.');
+  // Get config from database or env vars
+  const config = await getEffectiveConnectorConfig(userId, 'email');
+
+  if (!config || !config.apiKey) {
+    throw new Error('SendGrid not configured. Please configure email connector in Studio settings.');
   }
 
   try {
+    // Initialize SendGrid with config
+    sgMail.setApiKey(config.apiKey);
+
     const msg: any = {
       to,
-      from: SENDGRID_FROM_EMAIL,
+      from: config.fromEmail || 'agent@noahbyrnes.com',
       subject,
       text: body,
       html: body.replace(/\n/g, '<br>'),
@@ -74,20 +82,24 @@ export async function sendEmail(
 /**
  * Send an SMS via Twilio
  */
-export async function sendSMS(to: string, message: string): Promise<void> {
-  if (!twilioClient || !TWILIO_PHONE_NUMBER) {
-    throw new Error(
-      'Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER.'
-    );
+export async function sendSMS(to: string, message: string, userId?: string): Promise<void> {
+  // Get config from database or env vars
+  const config = await getEffectiveConnectorConfig(userId, 'sms');
+
+  if (!config || !config.accountSid || !config.authToken || !config.phoneNumber) {
+    throw new Error('Twilio not configured. Please configure SMS connector in Studio settings.');
   }
 
   try {
+    // Initialize Twilio with config
+    const client = twilio(config.accountSid, config.authToken);
+
     // Ensure phone number is in E.164 format
     const formattedTo = to.startsWith('+') ? to : `+1${to.replace(/\D/g, '')}`;
 
-    await twilioClient.messages.create({
+    await client.messages.create({
       body: message,
-      from: TWILIO_PHONE_NUMBER,
+      from: config.phoneNumber,
       to: formattedTo,
     });
 

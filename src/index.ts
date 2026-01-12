@@ -8,6 +8,7 @@ import { webhookRoutes, getConductorService } from './routes/webhooks.js';
 import { internalRoutes } from './routes/internal.js';
 import { sandboxRoutes } from './routes/sandbox.js';
 import { monitoringRoutes, setConductorServiceGetter } from './routes/monitoring.js';
+import { configRoutes } from './routes/config.js';
 // Worker disabled until Redis is configured
 // import './workers/event-processor.worker.js';
 
@@ -40,6 +41,7 @@ await fastify.register(agentRoutes);
 await fastify.register(logRoutes);
 await fastify.register(webhookRoutes);
 await fastify.register(monitoringRoutes);
+await fastify.register(configRoutes);
 await fastify.register(internalRoutes);
 await fastify.register(sandboxRoutes);
 
