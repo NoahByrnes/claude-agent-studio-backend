@@ -11,7 +11,7 @@ import { sandboxRoutes } from './routes/sandbox.js';
 import { monitoringRoutes, setConductorServiceGetter } from './routes/monitoring.js';
 import { configRoutes } from './routes/config.js';
 import templateConfigRoutes from './routes/template-config.js';
-import { initializeTemplateConfigTable } from './services/template-config.service.js';
+import { initializeTemplateConfig } from './services/template-config.service.js';
 import { loadTemplates } from './config/templates.js';
 // Worker disabled until Redis is configured
 // import './workers/event-processor.worker.js';
@@ -41,8 +41,8 @@ fastify.get('/health', async () => {
 // Set up monitoring to access conductor service
 setConductorServiceGetter(getConductorService);
 
-// Initialize template configuration system
-await initializeTemplateConfigTable();
+// Initialize template configuration system (Redis-based)
+await initializeTemplateConfig();
 await loadTemplates();
 
 // Register routes
