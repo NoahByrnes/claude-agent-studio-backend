@@ -10,7 +10,6 @@ import { E2BCLIExecutor } from './cli-executor-e2b.js';
 import {
   importMemoryToSandbox,
   exportMemoryFromSandbox,
-  initializeMemoryFile,
 } from '../services/memory.service.js';
 import {
   saveConductorState,
@@ -96,26 +95,28 @@ export class ConductorE2BService {
         try {
           await this.waitForCLI(existingSandbox);
 
-          // Ensure claude-mem plugin worker is running (optional, non-blocking)
-          try {
-            console.log('   📦 Verifying claude-mem worker is running...');
-            const workerCheck = await existingSandbox.commands.run(
-              'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:status 2>&1',
-              { timeoutMs: 5000 }
+          // Ensure claude-mem plugin worker is running (MANDATORY)
+          console.log('   📦 Verifying claude-mem worker is running...');
+          const workerCheck = await existingSandbox.commands.run(
+            'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:status 2>&1',
+            { timeoutMs: 5000 }
+          );
+
+          // If worker not running, start it
+          if (workerCheck.exitCode !== 0 || !workerCheck.stdout.includes('running')) {
+            console.log('   📦 Starting claude-mem worker...');
+            const startResult = await existingSandbox.commands.run(
+              'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:start 2>&1',
+              { timeoutMs: 30000 }
             );
 
-            // If worker not running, start it
-            if (workerCheck.exitCode !== 0 || !workerCheck.stdout.includes('running')) {
-              console.log('   📦 Starting claude-mem worker...');
-              await existingSandbox.commands.run(
-                'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:start',
-                { timeoutMs: 30000 }
-              );
-            } else {
-              console.log('   ✅ claude-mem worker already running');
+            if (startResult.exitCode !== 0) {
+              throw new Error(`Failed to start claude-mem worker on reconnect: ${startResult.stderr || startResult.stdout}`);
             }
-          } catch (error: any) {
-            console.warn(`   ⚠️  claude-mem worker check failed (non-critical): ${error.message}`);
+
+            console.log('   ✅ claude-mem worker started');
+          } else {
+            console.log('   ✅ claude-mem worker already running');
           }
 
           const executor = new E2BCLIExecutor(existingSandbox);
@@ -183,36 +184,46 @@ export class ConductorE2BService {
         await this.waitForCLI(sandbox);
 
         // Start claude-mem worker service (plugin is pre-installed in template)
+        // This is MANDATORY - conductor cannot function without it
         console.log('   📦 Starting claude-mem worker service...');
-        try {
+
+        // First check if worker is already running
+        const statusCheck = await sandbox.commands.run(
+          'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:status 2>&1',
+          { timeoutMs: 10000 }
+        );
+
+        let workerStarted = false;
+        if (statusCheck.stdout.includes('running') || statusCheck.stdout.includes('online')) {
+          console.log('   ✅ claude-mem worker already running');
+          workerStarted = true;
+        } else {
+          // Worker not running, start it
           const workerResult = await sandbox.commands.run(
-            'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:start',
+            'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:start 2>&1',
             { timeoutMs: 30000 }
           );
 
+          console.log(`   Worker start exit code: ${workerResult.exitCode}`);
+          console.log(`   Worker start stdout: ${workerResult.stdout}`);
+          console.log(`   Worker start stderr: ${workerResult.stderr}`);
+
           if (workerResult.exitCode === 0) {
             console.log('   ✅ claude-mem worker started');
-
-            // Initialize claude-mem and add fun seed memories
-            console.log('   🎨 Adding Stu\'s personality memories...');
-            await this.seedStuMemories(sandbox);
+            workerStarted = true;
           } else {
-            console.warn('   ⚠️  Worker service failed to start (non-critical)');
-            console.warn(`   Exit code: ${workerResult.exitCode}`);
-            console.warn(`   stdout: ${workerResult.stdout}`);
-            console.warn(`   stderr: ${workerResult.stderr}`);
-            console.warn('   Falling back to basic memory system');
+            throw new Error(`claude-mem worker failed to start (exit ${workerResult.exitCode}): ${workerResult.stderr || workerResult.stdout}`);
           }
-        } catch (error: any) {
-          console.warn(`   ⚠️  claude-mem worker start error (non-critical): ${error.message}`);
-          console.warn('   Falling back to basic memory system');
+        }
+
+        if (workerStarted) {
+          // Initialize claude-mem and add fun seed memories
+          console.log('   🎨 Adding Stu\'s personality memories...');
+          await this.seedStuMemories(sandbox);
         }
 
         // Import memory from previous sessions (if exists)
         await importMemoryToSandbox(sandbox, 'conductor');
-
-        // Initialize Stu's memory file (fallback if claude-mem failed)
-        await initializeMemoryFile(sandbox);
 
         const executor = new E2BCLIExecutor(sandbox);
 
@@ -723,20 +734,20 @@ You have persistent memory across conversations - use it to remember user prefer
 
 ## Memory Management System (CRITICAL - Read First!)
 
-**Check which memory system is available:**
-1. Try: \`mem --version\` (claude-mem system)
-2. If that works, use \`mem add\`, \`mem search\`, etc.
-3. If not available, use Read/Write on /root/stu-memory.json
+You have access to the **claude-mem** plugin for persistent memory:
 
-**Option A: claude-mem (if available):**
+**Available Commands:**
 - \`mem add "<memory>"\` - Store a new memory
 - \`mem search "<query>"\` - Search for relevant memories
 - \`mem list\` - List all memories
 - \`mem delete <id>\` - Delete a memory by ID
 
-**Option B: stu-memory.json (fallback):**
-- Read /root/stu-memory.json to see current memories
-- Modify the JSON and Write it back
+**IMPORTANT: Use mem commands via Bash tool!**
+
+Example:
+\`\`\`bash
+mem add "stripe.com has REST API at api.stripe.com/v1 - use for payments"
+\`\`\`
 
 **When to add memories:**
 1. **After worker reports API knowledge** (any "FYI" message)
