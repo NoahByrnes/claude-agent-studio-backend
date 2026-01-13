@@ -118,11 +118,12 @@ export async function updateTemplateConfig(
   // Update PostgreSQL (persistent storage)
   if (sqlClient) {
     try {
+      const configJson = JSON.stringify(newConfig);
       await sqlClient`
         INSERT INTO template_config (id, config, updated_at)
-        VALUES ('default', ${newConfig}::jsonb, NOW())
+        VALUES ('default', ${configJson}::jsonb, NOW())
         ON CONFLICT (id)
-        DO UPDATE SET config = ${newConfig}::jsonb, updated_at = NOW()
+        DO UPDATE SET config = ${configJson}::jsonb, updated_at = NOW()
       `;
       console.log('✅ Template config saved to PostgreSQL');
     } catch (error: any) {
@@ -210,9 +211,10 @@ export async function initializeTemplateConfigTable(): Promise<void> {
         updatedBy: 'manual',
       };
 
+      const configJson = JSON.stringify(initialConfig);
       await sqlClient`
         INSERT INTO template_config (id, config)
-        VALUES ('default', ${initialConfig}::jsonb)
+        VALUES ('default', ${configJson}::jsonb)
       `;
       console.log('✅ Template config initialized with environment variables');
     }
