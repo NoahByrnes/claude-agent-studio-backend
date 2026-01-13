@@ -1496,6 +1496,7 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
     };
 
     this.workerSessions.set(tempWorkerId, placeholderSession);
+    this.workerSandboxes.set(tempWorkerId, { sandbox, executor });
     this.conductorSession.activeWorkers.push(tempWorkerId);
 
     console.log(`   📝 Placeholder worker session created: ${tempWorkerId}`);
@@ -1535,6 +1536,14 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
           placeholderSess.id = realWorkerId;
           this.workerSessions.set(realWorkerId, placeholderSess);
           console.log(`   ✅ Updated worker session: ${tempWorkerId} → ${realWorkerId}`);
+
+          // Move sandbox reference to real ID
+          const sandboxRef = this.workerSandboxes.get(tempWorkerId);
+          if (sandboxRef) {
+            this.workerSandboxes.delete(tempWorkerId);
+            this.workerSandboxes.set(realWorkerId, sandboxRef);
+            console.log(`   ✅ Updated worker sandbox reference: ${tempWorkerId} → ${realWorkerId}`);
+          }
 
           // Update conductor's active workers list
           const index = this.conductorSession.activeWorkers.indexOf(tempWorkerId);
