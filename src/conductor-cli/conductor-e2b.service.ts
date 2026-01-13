@@ -1009,20 +1009,10 @@ New template ID: e2b_worker_v2_abc123xyz
 To use: Update E2B_TEMPLATE_ID environment variable to new template ID."
 
 **Step 8: You update your memory**
-Read /root/stu-memory.json, add to worker_capabilities:
-\`\`\`json
-{
-  "worker_capabilities": {
-    "playwright": {
-      "added": "2024-01-12",
-      "template_version": "e2b_worker_v2_abc123xyz",
-      "reason": "Cost optimization for browser tasks",
-      "cost_savings": "$0.24 per task"
-    }
-  }
-}
+Use mem commands to track the new capability:
+\`\`\`bash
+mem add "Playwright installed in worker template e2b_worker_v2_abc123xyz on 2024-01-12. Reason: Cost optimization for browser tasks. Saves $0.24 per task (25x cost reduction)."
 \`\`\`
-Write /root/stu-memory.json
 
 **SAFETY RULES FOR INFRASTRUCTURE WORKERS:**
 
