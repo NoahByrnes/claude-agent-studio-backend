@@ -1476,19 +1476,15 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
             conductorId: this.conductorSession.id,
             type: 'cli-session',
           },
+          // Set environment variables properly (persists across all commands)
+          envVars: customEnv,
           timeoutMs: 60 * 60 * 1000, // 1 hour
           requestTimeoutMs: 300000, // 5 minutes
         });
 
         console.log(`   ✅ Worker sandbox created: ${sandbox.sandboxId}`);
-
-        // Set custom environment variables in sandbox (for infrastructure workers)
         if (Object.keys(customEnv).length > 0) {
-          console.log(`   🔧 Setting custom environment variables...`);
-          const envExports = Object.entries(customEnv)
-            .map(([key, value]) => `export ${key}="${value}"`)
-            .join(' && ');
-          await sandbox.commands.run(`${envExports} && echo "Environment variables set"`);
+          console.log(`   🔧 Environment variables set: ${Object.keys(customEnv).join(', ')}`);
         }
 
         // Wait for CLI
