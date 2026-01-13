@@ -4,6 +4,10 @@
  * Manages different E2B template IDs for different worker types:
  * - Standard workers: General task execution
  * - Infrastructure workers: Can modify worker template repository
+ *
+ * NOTE: These are loaded dynamically from Redis/PostgreSQL.
+ * Call loadTemplates() on startup to populate from database.
+ * Infrastructure workers can update these via API endpoints.
  */
 
 export const E2B_TEMPLATES = {
@@ -27,6 +31,39 @@ export const E2B_TEMPLATES = {
    */
   INFRASTRUCTURE: process.env.E2B_INFRASTRUCTURE_TEMPLATE_ID || '',
 };
+
+/**
+ * Load template IDs from database/Redis
+ * Call this on startup to populate E2B_TEMPLATES with latest values
+ */
+export async function loadTemplates(): Promise<void> {
+  try {
+    const { getTemplateConfig } = await import('../services/template-config.service.js');
+    const config = await getTemplateConfig();
+
+    // Update in-memory cache
+    E2B_TEMPLATES.CONDUCTOR = config.conductor || E2B_TEMPLATES.CONDUCTOR;
+    E2B_TEMPLATES.WORKER = config.worker || E2B_TEMPLATES.WORKER;
+    E2B_TEMPLATES.INFRASTRUCTURE = config.infrastructure || E2B_TEMPLATES.INFRASTRUCTURE;
+
+    console.log('✅ Template IDs loaded:', {
+      conductor: E2B_TEMPLATES.CONDUCTOR,
+      worker: E2B_TEMPLATES.WORKER,
+      infrastructure: E2B_TEMPLATES.INFRASTRUCTURE,
+    });
+  } catch (error: any) {
+    console.warn('⚠️  Failed to load template IDs from database, using environment variables:', error.message);
+  }
+}
+
+/**
+ * Reload template IDs from database/Redis
+ * Call this after infrastructure workers update templates
+ */
+export async function reloadTemplates(): Promise<void> {
+  console.log('🔄 Reloading template IDs...');
+  await loadTemplates();
+}
 
 /**
  * Worker template repository configuration

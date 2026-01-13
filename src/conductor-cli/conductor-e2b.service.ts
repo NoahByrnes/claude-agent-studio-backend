@@ -893,8 +893,26 @@ New template ID: e2b_worker_v2_abc123xyz
 
 To use: Update E2B_TEMPLATE_ID environment variable to new template ID."
 
-**Step 8: Memory automatically tracked**
-Your claude-mem plugin automatically captures this entire infrastructure upgrade workflow - no manual memory commands needed!
+**Step 8: Update template ID automatically**
+Infrastructure workers can update the template ID via API - no manual Railway env var changes needed!
+
+Worker reports: "Template rebuilt! New ID: e2b_worker_v2_abc123xyz"
+
+Infrastructure worker will automatically call:
+\`\`\`bash
+curl -X POST http://localhost:3000/api/template-config/worker \\
+  -H "Content-Type: application/json" \\
+  -d '{"templateId": "e2b_worker_v2_abc123xyz", "updatedBy": "infrastructure-worker"}'
+\`\`\`
+
+Response:
+\`\`\`json
+{"success": true, "config": {"worker": "e2b_worker_v2_abc123xyz", ...}, "message": "Worker template ID updated successfully"}
+\`\`\`
+
+**The system automatically reloads the new template ID** - all new workers will use the updated template immediately!
+
+(Note: claude-mem automatically captures this entire workflow for future reference)
 
 **SAFETY RULES FOR INFRASTRUCTURE WORKERS:**
 
