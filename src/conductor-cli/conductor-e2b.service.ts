@@ -96,19 +96,25 @@ export class ConductorE2BService {
         try {
           await this.waitForCLI(existingSandbox);
 
-          // Ensure claude-mem is available (optional, non-blocking)
+          // Ensure claude-mem plugin is available (optional, non-blocking)
           try {
-            console.log('   📦 Verifying claude-mem is available...');
-            const memCheck = await existingSandbox.commands.run('which mem', { timeoutMs: 5000 });
-            if (memCheck.exitCode !== 0) {
-              console.log('   📦 Installing claude-mem...');
-              const installResult = await existingSandbox.commands.run('npm install -g claude-mem', { timeoutMs: 60000 });
-              if (installResult.exitCode !== 0) {
-                console.warn('   ⚠️  claude-mem installation failed (non-critical)');
+            console.log('   📦 Verifying claude-mem plugin is available...');
+            const pluginCheck = await existingSandbox.commands.run('test -d ~/.claude/plugins/claude-mem && echo "exists"', { timeoutMs: 5000 });
+            if (!pluginCheck.stdout.includes('exists')) {
+              console.log('   📦 Installing claude-mem plugin...');
+              await existingSandbox.commands.run('mkdir -p ~/.claude/plugins', { timeoutMs: 5000 });
+              const cloneResult = await existingSandbox.commands.run(
+                'git clone https://github.com/thedotmack/claude-mem.git ~/.claude/plugins/claude-mem',
+                { timeoutMs: 60000 }
+              );
+              if (cloneResult.exitCode !== 0) {
+                console.warn('   ⚠️  claude-mem plugin installation failed (non-critical)');
               }
+            } else {
+              console.log('   ✅ claude-mem plugin already installed');
             }
           } catch (error: any) {
-            console.warn(`   ⚠️  claude-mem check failed (non-critical): ${error.message}`);
+            console.warn(`   ⚠️  claude-mem plugin check failed (non-critical): ${error.message}`);
           }
 
           const executor = new E2BCLIExecutor(existingSandbox);
@@ -172,25 +178,32 @@ export class ConductorE2BService {
         // Wait for Claude CLI to be available
         await this.waitForCLI(sandbox);
 
-        // Install claude-mem for persistent memory (conductor only)
-        // Make this non-blocking so conductor can start even if it fails
-        console.log('   📦 Installing claude-mem for Stu\'s memory...');
+        // Install claude-mem plugin for persistent memory (conductor only)
+        // claude-mem is a Claude Code plugin, install via git clone
+        console.log('   📦 Installing claude-mem plugin for Stu\'s memory...');
         try {
-          const installResult = await sandbox.commands.run('npm install -g claude-mem', { timeoutMs: 60000 });
-          if (installResult.exitCode === 0) {
-            console.log('   ✅ claude-mem installed successfully');
+          // Install plugin manually (plugins installed via /plugin commands need interactive session)
+          // Clone the plugin to ~/.claude/plugins directory
+          await sandbox.commands.run('mkdir -p ~/.claude/plugins', { timeoutMs: 5000 });
+          const cloneResult = await sandbox.commands.run(
+            'git clone https://github.com/thedotmack/claude-mem.git ~/.claude/plugins/claude-mem',
+            { timeoutMs: 60000 }
+          );
 
+          if (cloneResult.exitCode === 0) {
+            console.log('   ✅ claude-mem plugin cloned successfully');
+
+            // The plugin should now be available automatically in Claude CLI sessions
             // Initialize claude-mem and add fun seed memories
             console.log('   🎨 Adding Stu\'s personality memories...');
             await this.seedStuMemories(sandbox);
           } else {
-            console.warn('   ⚠️  claude-mem installation failed (non-critical)');
-            console.warn(`   stdout: ${installResult.stdout}`);
-            console.warn(`   stderr: ${installResult.stderr}`);
+            console.warn('   ⚠️  claude-mem plugin clone failed (non-critical)');
+            console.warn(`   stderr: ${cloneResult.stderr}`);
             console.warn('   Falling back to basic memory system');
           }
         } catch (error: any) {
-          console.warn(`   ⚠️  claude-mem installation error (non-critical): ${error.message}`);
+          console.warn(`   ⚠️  claude-mem plugin installation error (non-critical): ${error.message}`);
           console.warn('   Falling back to basic memory system');
         }
 
