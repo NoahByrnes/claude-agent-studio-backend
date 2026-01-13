@@ -198,6 +198,8 @@ export class ConductorE2BService {
             await this.seedStuMemories(sandbox);
           } else {
             console.warn('   ⚠️  Worker service failed to start (non-critical)');
+            console.warn(`   Exit code: ${workerResult.exitCode}`);
+            console.warn(`   stdout: ${workerResult.stdout}`);
             console.warn(`   stderr: ${workerResult.stderr}`);
             console.warn('   Falling back to basic memory system');
           }
