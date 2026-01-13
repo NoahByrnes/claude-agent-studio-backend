@@ -96,12 +96,19 @@ export class ConductorE2BService {
         try {
           await this.waitForCLI(existingSandbox);
 
-          // Ensure claude-mem is still available (may have been cleared)
-          console.log('   📦 Verifying claude-mem is available...');
-          const memCheck = await existingSandbox.commands.run('claude-mem --version', { timeoutMs: 5000 });
-          if (memCheck.exitCode !== 0) {
-            console.log('   📦 Installing claude-mem...');
-            await existingSandbox.commands.run('npm install -g claude-mem', { timeoutMs: 60000 });
+          // Ensure claude-mem is available (optional, non-blocking)
+          try {
+            console.log('   📦 Verifying claude-mem is available...');
+            const memCheck = await existingSandbox.commands.run('which mem', { timeoutMs: 5000 });
+            if (memCheck.exitCode !== 0) {
+              console.log('   📦 Installing claude-mem...');
+              const installResult = await existingSandbox.commands.run('npm install -g claude-mem', { timeoutMs: 60000 });
+              if (installResult.exitCode !== 0) {
+                console.warn('   ⚠️  claude-mem installation failed (non-critical)');
+              }
+            }
+          } catch (error: any) {
+            console.warn(`   ⚠️  claude-mem check failed (non-critical): ${error.message}`);
           }
 
           const executor = new E2BCLIExecutor(existingSandbox);
@@ -166,15 +173,32 @@ export class ConductorE2BService {
         await this.waitForCLI(sandbox);
 
         // Install claude-mem for persistent memory (conductor only)
+        // Make this non-blocking so conductor can start even if it fails
         console.log('   📦 Installing claude-mem for Stu\'s memory...');
-        await sandbox.commands.run('npm install -g claude-mem', { timeoutMs: 60000 });
+        try {
+          const installResult = await sandbox.commands.run('npm install -g claude-mem', { timeoutMs: 60000 });
+          if (installResult.exitCode === 0) {
+            console.log('   ✅ claude-mem installed successfully');
+
+            // Initialize claude-mem and add fun seed memories
+            console.log('   🎨 Adding Stu\'s personality memories...');
+            await this.seedStuMemories(sandbox);
+          } else {
+            console.warn('   ⚠️  claude-mem installation failed (non-critical)');
+            console.warn(`   stdout: ${installResult.stdout}`);
+            console.warn(`   stderr: ${installResult.stderr}`);
+            console.warn('   Falling back to basic memory system');
+          }
+        } catch (error: any) {
+          console.warn(`   ⚠️  claude-mem installation error (non-critical): ${error.message}`);
+          console.warn('   Falling back to basic memory system');
+        }
 
         // Import memory from previous sessions (if exists)
         await importMemoryToSandbox(sandbox, 'conductor');
 
-        // Initialize claude-mem and add fun seed memories
-        console.log('   🎨 Adding Stu\'s personality memories...');
-        await this.seedStuMemories(sandbox);
+        // Initialize Stu's memory file (fallback if claude-mem failed)
+        await initializeMemoryFile(sandbox);
 
         const executor = new E2BCLIExecutor(sandbox);
 
@@ -674,17 +698,24 @@ Begin working on the infrastructure task now.`;
 
 ## Your Identity
 Your name is Stu. You're a capable, helpful orchestrator who manages autonomous workers to get things done.
-You have persistent memory across conversations using the **claude-mem** system - use it to remember user preferences, learned capabilities, and past interactions.
+You have persistent memory across conversations - use it to remember user preferences, learned capabilities, and past interactions.
 
 ## Memory Management System (CRITICAL - Read First!)
 
-You have access to the **claude-mem** command-line tool for persistent memory:
+**Check which memory system is available:**
+1. Try: \`mem --version\` (claude-mem system)
+2. If that works, use \`mem add\`, \`mem search\`, etc.
+3. If not available, use Read/Write on /root/stu-memory.json
 
-**Available Commands:**
+**Option A: claude-mem (if available):**
 - \`mem add "<memory>"\` - Store a new memory
 - \`mem search "<query>"\` - Search for relevant memories
 - \`mem list\` - List all memories
 - \`mem delete <id>\` - Delete a memory by ID
+
+**Option B: stu-memory.json (fallback):**
+- Read /root/stu-memory.json to see current memories
+- Modify the JSON and Write it back
 
 **When to add memories:**
 1. **After worker reports API knowledge** (any "FYI" message)
