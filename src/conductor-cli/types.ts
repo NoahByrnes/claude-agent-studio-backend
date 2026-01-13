@@ -43,7 +43,7 @@ export interface CLIStreamMessage {
 
 export interface Session {
   id: string;
-  role: 'conductor' | 'worker';
+  role: 'conductor' | 'worker' | 'infrastructure-worker';
   createdAt: Date;
   lastActivityAt: Date;
   sandboxId: string; // E2B sandbox ID
@@ -55,7 +55,7 @@ export interface ConductorSession extends Session {
 }
 
 export interface WorkerSession extends Session {
-  role: 'worker';
+  role: 'worker' | 'infrastructure-worker';
   conductorId: string;
   task: string;
   status: 'initializing' | 'running' | 'complete' | 'error' | 'blocked';
@@ -85,7 +85,7 @@ export interface WorkerReport {
 // ============================================================================
 
 export interface DetectedCommand {
-  type: 'spawn-worker' | 'send-email' | 'send-sms' | 'deliver-file' | 'list-workers' | 'kill-worker' | 'none';
+  type: 'spawn-worker' | 'spawn-infrastructure-worker' | 'send-email' | 'send-sms' | 'deliver-file' | 'list-workers' | 'kill-worker' | 'none';
   payload?: Record<string, any>;
 }
 

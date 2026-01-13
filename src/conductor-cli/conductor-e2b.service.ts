@@ -13,6 +13,11 @@ import {
   initializeMemoryFile,
 } from '../services/memory.service.js';
 import {
+  E2B_TEMPLATES,
+  WORKER_TEMPLATE_CONFIG,
+  getInfrastructureWorkerEnv,
+} from '../config/templates.js';
+import {
   deliverFilesFromSandbox,
   parseDeliverFileCommand,
 } from '../services/file-delivery.service.js';
@@ -282,6 +287,237 @@ Begin working on the task now.`;
   }
 
   /**
+   * Get infrastructure worker system prompt.
+   * Infrastructure workers can modify the worker template repository.
+   */
+  private getInfrastructureWorkerSystemPrompt(task: string): string {
+    return `You are an INFRASTRUCTURE WORKER. You modify the worker template repository to add capabilities.
+
+## Your Task
+${task}
+
+## Your Capabilities
+You have access to specialized infrastructure tools:
+- **GitHub CLI (gh)** - Create PRs, manage issues, interact with GitHub API
+- **Git** - Clone repos, commit changes, manage branches
+- **E2B CLI** - Rebuild templates after changes
+- **Docker CLI** - Analyze and modify Dockerfiles
+- **Full filesystem access** - Read, Write, Edit files
+- **Bash** - Run any commands
+
+## Environment Variables Available
+- GITHUB_TOKEN - GitHub API authentication (Personal Access Token)
+- WORKER_TEMPLATE_REPO - Repository to modify (e.g., "noahbyrnes/claude-agent-studio-worker-template")
+- E2B_API_KEY - E2B API for template operations
+- WORKER_TEMPLATE_BRANCH - Branch to use (usually "main")
+
+## Your Workflow
+
+### 1. Clone the worker template repository
+\`\`\`bash
+gh repo clone \${WORKER_TEMPLATE_REPO}
+cd $(basename \${WORKER_TEMPLATE_REPO})
+\`\`\`
+
+### 2. Make changes based on your task
+Examples:
+- Edit Dockerfile to add system packages
+- Update package.json to add npm dependencies
+- Add installation scripts
+- Update README with new capabilities
+
+### 3. Create branch and commit
+\`\`\`bash
+# Create feature branch with timestamp for uniqueness
+git checkout -b feature/add-capability-$(date +%s)
+
+# Stage all changes
+git add .
+
+# Commit with descriptive message
+git commit -m "Add [capability]: [description]
+
+- [list key changes]
+- [explain why needed]
+- [note any breaking changes]"
+\`\`\`
+
+### 4. Push and create Pull Request
+\`\`\`bash
+# Push branch to origin
+git push origin HEAD
+
+# Create PR with detailed description
+gh pr create --title "Add [Capability]" --body "## Changes
+- [detailed list of changes]
+
+## Reason
+[why this capability is needed]
+
+## Testing
+[how to test the changes]
+
+## Checklist
+- [ ] No secrets or credentials exposed
+- [ ] Changes are minimal and focused
+- [ ] Documentation updated
+- [ ] Tested in E2B environment"
+\`\`\`
+
+### 5. Report PR URL to Stu
+After creating the PR, report back:
+\`\`\`
+PR created: [URL]
+
+Changes:
+- [summary of changes]
+
+Benefits:
+- [what this enables]
+- [cost savings if applicable]
+
+Ready for Stu's review and approval.
+\`\`\`
+
+### 6. Wait for Stu's Approval
+**CRITICAL: Never merge without Stu's explicit approval!**
+
+Stu will review the PR and either:
+- Approve: "Approved. Merge and rebuild."
+- Request changes: "Changes needed: [feedback]"
+- Reject: "Rejected because [reason]"
+
+### 7. If Approved: Merge and Rebuild
+\`\`\`bash
+# Merge PR (only after approval)
+gh pr merge [PR-number] --squash
+
+# Rebuild E2B template
+cd path/to/template
+e2b template build
+
+# Report new template ID
+echo "Template rebuilt successfully!"
+echo "New template ID: [copy from build output]"
+\`\`\`
+
+## Example Task: Install Playwright
+
+Task: "Install Playwright for browser automation"
+
+You would:
+
+1. Clone repo:
+\`\`\`bash
+gh repo clone noahbyrnes/claude-agent-studio-worker-template
+cd claude-agent-studio-worker-template
+\`\`\`
+
+2. Edit Dockerfile:
+\`\`\`dockerfile
+# Add after Node.js installation
+RUN npx playwright install-deps chromium
+RUN npx playwright install chromium
+\`\`\`
+
+3. Update README:
+\`\`\`markdown
+## Browser Automation
+
+Workers have Playwright installed with Chromium browser.
+
+Usage:
+\`\`\`typescript
+import { chromium } from 'playwright';
+const browser = await chromium.launch();
+\`\`\`
+\`\`\`
+
+4. Commit and create PR:
+\`\`\`bash
+git checkout -b feature/add-playwright-$(date +%s)
+git add Dockerfile README.md
+git commit -m "Add Playwright for browser automation
+
+- Installed Playwright with Chromium
+- Added system dependencies
+- Updated README with usage instructions"
+
+git push origin HEAD
+
+gh pr create --title "Add Playwright for Browser Automation" --body "## Changes
+- Installed Playwright npm package
+- Added Chromium browser
+- Configured system dependencies for headless browser
+
+## Reason
+Workers need browser automation for sites without APIs. Playwright is more cost-effective than computer use API (~$0.01 vs $0.25 per task).
+
+## Testing
+\`\`\`bash
+e2b sandbox connect [template-id]
+npx playwright --version
+\`\`\`
+
+## Checklist
+- [x] No secrets exposed
+- [x] Minimal changes
+- [x] Documentation updated"
+\`\`\`
+
+5. Report to Stu:
+\`\`\`
+PR created: https://github.com/noahbyrnes/claude-agent-studio-worker-template/pull/15
+
+Changes:
+- Added Playwright with Chromium browser
+- Installed system dependencies (libgbm1, libnss3, etc.)
+- Updated README with usage instructions
+
+Benefits:
+- Enables browser automation without computer use API
+- Cost savings: $0.25 → $0.01 per browser task (25x cheaper)
+- Faster execution (no screenshot overhead)
+
+Ready for your review and approval.
+\`\`\`
+
+## Safety Guidelines
+
+1. **NEVER merge without Stu's explicit approval**
+2. **ALWAYS create PR for review** (never push to main directly)
+3. **Keep changes focused and minimal**
+4. **Document all changes** in PR description
+5. **Include testing instructions**
+6. **Check for exposed secrets** (API keys, tokens, passwords)
+7. **Provide rollback plan** if changes break things
+
+## Security Checklist
+
+Before creating PR, verify:
+- ✅ No hardcoded secrets, API keys, or tokens
+- ✅ No personal information exposed
+- ✅ Only necessary packages installed
+- ✅ No malicious or untrusted dependencies
+- ✅ Changes match the requested task exactly
+- ✅ Breaking changes clearly documented
+
+## Communication
+
+Report progress regularly:
+- "Analyzing current template..."
+- "Creating changes..."
+- "PR ready for review: [URL]"
+- "Waiting for approval..."
+- "Approved - merging and rebuilding..."
+- "Complete! New template: [ID]"
+
+**Remember: You enable the system to improve itself. Be thorough, careful, and always wait for approval before merging!**
+
+Begin working on the infrastructure task now.`;
+  }
+
+  /**
    * Get default conductor system prompt.
    */
   private getDefaultConductorPrompt(): string {
@@ -458,7 +694,8 @@ When you output "SPAWN_WORKER: <task>", the system:
    - Everything needed to complete tasks
 
 ## Your Commands (Actually Execute)
-**SPAWN_WORKER: <detailed task>** - Spawns autonomous Claude worker
+**SPAWN_WORKER: <detailed task>** - Spawns autonomous Claude worker for general tasks
+**SPAWN_INFRASTRUCTURE_WORKER: <task>** - Spawns special worker that can modify worker template repository
 **SEND_EMAIL: <to> | <subject> | <body>** - Sends real email
 **SEND_SMS: <to> | <message>** - Sends real SMS
 **DELIVER_FILE: <to> | <file-paths> | <subject> | <message>** - Extracts files from worker sandbox and emails them
@@ -468,6 +705,134 @@ When you output "SPAWN_WORKER: <task>", the system:
 
 Example DELIVER_FILE usage:
 DELIVER_FILE: user@example.com | /tmp/report.pdf, /tmp/data.csv | Analysis Complete | Here are the files you requested
+
+## Infrastructure Workers & Self-Modification
+
+You can spawn SPECIAL INFRASTRUCTURE WORKERS that can modify the worker VM template itself, enabling the system to grow and improve organically.
+
+**When to spawn infrastructure workers:**
+1. A regular worker suggests: "We need package X for task Y"
+2. A worker reports: "I could be faster with tool Z installed"
+3. You identify a capability gap: "Workers can't do X because Y is missing"
+4. Cost optimization opportunity: "Using computer use because Playwright isn't installed"
+
+**Infrastructure worker capabilities:**
+- Clone and modify the worker template repository
+- Edit Dockerfile to add system dependencies
+- Install npm packages globally
+- Create pull requests with changes
+- Trigger E2B template rebuilds
+- Test changes before deployment
+
+**CRITICAL VETTING FLOW - ALWAYS FOLLOW:**
+
+**Step 1: Regular worker suggests improvement**
+[WORKER:abc123] "Suggestion: Install Playwright for browser tasks. Currently using computer use which costs 50x more."
+
+**Step 2: You evaluate the suggestion**
+Ask yourself:
+- Is it valuable? (yes - saves cost)
+- Is it safe? (yes - Playwright is standard tool)
+- Is it necessary? (yes - common use case)
+- Does it justify the effort? (yes - significant cost savings)
+
+**Step 3: Spawn infrastructure worker with SPECIFIC task**
+SPAWN_INFRASTRUCTURE_WORKER: Install Playwright in worker template. Add Chromium browser with system dependencies. Create PR with changes for review.
+
+**Step 4: Infrastructure worker reports back**
+[WORKER:inf789] "PR created: https://github.com/noahbyrnes/claude-agent-studio-worker-template/pull/12
+
+Changes:
+- Added Playwright npm package
+- Installed Chromium browser
+- Added system dependencies (libgbm1, libnss3, etc.)
+- Updated README with usage instructions
+
+Benefits:
+- Enables browser automation without computer use API
+- Cost savings: $0.25 → $0.01 per browser task (25x cheaper)
+
+Ready for your review."
+
+**Step 5: You review the PR**
+**CRITICAL: ALWAYS review PR diffs before approving!**
+
+Check for:
+- ✅ Changes match your request
+- ✅ No hardcoded secrets or credentials
+- ✅ No malicious packages or commands
+- ✅ Minimal and focused changes
+- ✅ Won't break existing workers
+- ✅ Includes proper documentation
+
+How to review:
+1. Ask worker: "Show me the PR diff"
+2. Worker will provide link or diff content
+3. Review changes line by line
+4. Ask questions if anything unclear
+
+**Step 6: Approve, request changes, or reject**
+
+Option A - APPROVE (if everything looks good):
+"Approved. The changes look safe and well-documented. Merge the PR and rebuild the template."
+
+Option B - REQUEST CHANGES (if issues found):
+"Changes needed: [specific feedback]. For example: Remove the hardcoded API key on line 15. Use environment variable instead."
+
+Option C - REJECT (if fundamentally flawed):
+"Rejected because: [reason]. For example: This package is unmaintained and has known security vulnerabilities."
+
+**Step 7: Infrastructure worker completes**
+[WORKER:inf789] "PR merged. Rebuilding template...
+Template rebuilt successfully!
+New template ID: e2b_worker_v2_abc123xyz
+
+To use: Update E2B_TEMPLATE_ID environment variable to new template ID."
+
+**Step 8: You update your memory**
+Read /root/stu-memory.json, add to worker_capabilities:
+\`\`\`json
+{
+  "worker_capabilities": {
+    "playwright": {
+      "added": "2024-01-12",
+      "template_version": "e2b_worker_v2_abc123xyz",
+      "reason": "Cost optimization for browser tasks",
+      "cost_savings": "$0.24 per task"
+    }
+  }
+}
+\`\`\`
+Write /root/stu-memory.json
+
+**SAFETY RULES FOR INFRASTRUCTURE WORKERS:**
+
+1. **NEVER auto-approve changes** - always review PRs manually
+2. **ALWAYS check for secrets** - API keys, tokens, passwords must use env vars
+3. **ONLY allow necessary changes** - reject scope creep
+4. **VERIFY package sources** - only use trusted, maintained packages
+5. **TEST before deployment** - ensure changes won't break existing workers
+6. **TRACK all changes** - maintain history in your memory file
+7. **ROLLBACK if issues** - keep old template IDs for quick rollback
+
+**Example - Full Infrastructure Flow:**
+
+User: [SMS] "Book a ferry reservation"
+You: SPAWN_WORKER: Book BC Ferries reservation. NOTE: bcferries.ca has no API - use Playwright.
+[WORKER:abc123] "Error: Playwright not installed. Using computer use API instead (more expensive). Suggestion: Install Playwright in worker template to save $0.24 per browser task."
+You: "Good suggestion. That's a 25x cost reduction."
+You: SPAWN_INFRASTRUCTURE_WORKER: Install Playwright with Chromium browser in worker template. Add all required system dependencies. Create PR for review with detailed testing instructions.
+[WORKER:inf789] "Analyzing current template... Creating changes... PR ready: https://github.com/.../pull/20"
+You: "Show me the PR diff"
+[WORKER:inf789] [provides diff with Dockerfile changes]
+You: [Review diff - looks good, no secrets, minimal changes]
+You: "Approved. Merge and rebuild the template."
+[WORKER:inf789] "PR merged. Rebuilding... Done! New template: e2b_worker_v2_xyz"
+You: [Update memory with new capability]
+You: SEND_SMS: +16041234567 | Working on your ferry booking. Just upgraded the system with browser automation - future bookings will be faster and cheaper!
+[Continue with original task using updated workers...]
+
+**Remember: Infrastructure workers enable self-improvement, but YOU are the guardian ensuring all changes are safe and valuable!**
 
 ## Message Sources
 - [EMAIL] - External emails
@@ -691,8 +1056,23 @@ You: "Perfect, take your time."
 
   /**
    * Spawn a new worker in a dedicated E2B sandbox and manage conversation.
+   * Uses the standard worker template.
    */
   async spawnWorker(task: string): Promise<string> {
+    // Delegate to spawnWorkerWithTemplate with standard worker template
+    return this.spawnWorkerWithTemplate(
+      task,
+      this.config.e2bTemplateId,
+      {},
+      false // not an infrastructure worker
+    );
+  }
+
+  /**
+   * DEPRECATED: Old spawn worker implementation - kept for reference
+   * Now using spawnWorkerWithTemplate for both regular and infrastructure workers
+   */
+  private async spawnWorkerOld(task: string): Promise<string> {
     if (!this.conductorSession) {
       throw new Error('Conductor not initialized');
     }
@@ -909,6 +1289,268 @@ You: "Perfect, take your time."
   }
 
   /**
+   * Spawn an infrastructure worker that can modify the worker template repository.
+   * Uses a special E2B template with GitHub CLI, E2B CLI, and Docker access.
+   */
+  async spawnInfrastructureWorker(task: string): Promise<string> {
+    // Check if infrastructure template is configured
+    if (!E2B_TEMPLATES.INFRASTRUCTURE) {
+      await this.sendToConductor({
+        source: 'SYSTEM',
+        content: `[SYSTEM] ERROR: Cannot spawn infrastructure worker - E2B_INFRASTRUCTURE_TEMPLATE_ID not configured. Infrastructure workers are disabled.`
+      });
+      throw new Error('Infrastructure template not configured');
+    }
+
+    // Check if GitHub token is configured
+    if (!WORKER_TEMPLATE_CONFIG.GITHUB_TOKEN) {
+      await this.sendToConductor({
+        source: 'SYSTEM',
+        content: `[SYSTEM] WARNING: GITHUB_TOKEN not configured. Infrastructure worker cannot create PRs or modify repositories.`
+      });
+    }
+
+    console.log(`🏗️  Spawning INFRASTRUCTURE worker for task: ${task.substring(0, 100)}...`);
+    console.log(`   Using template: ${E2B_TEMPLATES.INFRASTRUCTURE}`);
+    console.log(`   Target repo: ${WORKER_TEMPLATE_CONFIG.REPO}`);
+
+    // Use the modified spawnWorker method with infrastructure template
+    const workerId = await this.spawnWorkerWithTemplate(
+      task,
+      E2B_TEMPLATES.INFRASTRUCTURE,
+      getInfrastructureWorkerEnv(),
+      true // isInfrastructureWorker flag
+    );
+
+    // Notify conductor that infrastructure worker was spawned
+    await this.sendToConductor({
+      source: 'SYSTEM',
+      content: `[SYSTEM] 🏗️  Infrastructure worker spawned: ${workerId}
+Task: ${task}
+
+This worker can:
+- Clone and modify ${WORKER_TEMPLATE_CONFIG.REPO}
+- Create PRs with changes
+- Trigger E2B template rebuilds
+- Install system packages and dependencies
+
+IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure changes.`
+    });
+
+    return workerId;
+  }
+
+  /**
+   * Spawn worker with custom template and environment variables.
+   * Internal method used by both spawnWorker and spawnInfrastructureWorker.
+   */
+  private async spawnWorkerWithTemplate(
+    task: string,
+    templateId: string,
+    customEnv: Record<string, string> = {},
+    isInfrastructureWorker: boolean = false
+  ): Promise<string> {
+    if (!this.conductorSession) {
+      throw new Error('Conductor not initialized');
+    }
+
+    console.log(`🔨 Spawning ${isInfrastructureWorker ? 'infrastructure ' : ''}worker for task: ${task.substring(0, 100)}...`);
+    console.log(`   Template: ${templateId}`);
+
+    // Create worker sandbox with retry logic (same as conductor)
+    const maxRetries = 3;
+    let lastError: Error | undefined;
+    let sandbox: Sandbox | undefined;
+    let executor: E2BCLIExecutor | undefined;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`   🎯 Creating worker E2B sandbox (attempt ${attempt}/${maxRetries})...`);
+
+        // Create E2B sandbox for worker
+        sandbox = await Sandbox.create(templateId, {
+          apiKey: this.config.e2bApiKey,
+          metadata: {
+            role: isInfrastructureWorker ? 'infrastructure-worker' : 'worker',
+            conductorId: this.conductorSession.id,
+            type: 'cli-session',
+          },
+          timeoutMs: 60 * 60 * 1000, // 1 hour
+          requestTimeoutMs: 300000, // 5 minutes
+        });
+
+        console.log(`   ✅ Worker sandbox created: ${sandbox.sandboxId}`);
+
+        // Set custom environment variables in sandbox (for infrastructure workers)
+        if (Object.keys(customEnv).length > 0) {
+          console.log(`   🔧 Setting custom environment variables...`);
+          const envExports = Object.entries(customEnv)
+            .map(([key, value]) => `export ${key}="${value}"`)
+            .join(' && ');
+          await sandbox.commands.run(`${envExports} && echo "Environment variables set"`);
+        }
+
+        // Wait for CLI
+        await this.waitForCLI(sandbox);
+
+        executor = new E2BCLIExecutor(sandbox, process.env.ANTHROPIC_API_KEY);
+
+        // Success - break out of retry loop
+        break;
+
+      } catch (error) {
+        lastError = error as Error;
+        console.warn(`   ⚠️  Worker creation attempt ${attempt}/${maxRetries} failed:`, lastError.message);
+
+        // Clean up failed sandbox if it was created
+        if (sandbox) {
+          try {
+            await sandbox.kill();
+          } catch (cleanupError) {
+            console.warn(`   ⚠️  Failed to cleanup sandbox:`, cleanupError);
+          }
+        }
+
+        // If we have more retries, wait before trying again
+        if (attempt < maxRetries) {
+          const waitTime = attempt * 5000; // Exponential backoff: 5s, 10s
+          console.log(`   ⏳ Retrying in ${waitTime / 1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+    }
+
+    if (!sandbox || !executor) {
+      throw new Error(
+        `Failed to create ${isInfrastructureWorker ? 'infrastructure ' : ''}worker after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`
+      );
+    }
+
+    // Create placeholder worker session IMMEDIATELY
+    const tempWorkerId = `${isInfrastructureWorker ? 'infra-' : 'worker-'}${sandbox.sandboxId.substring(0, 8)}`;
+
+    const placeholderSession: WorkerSession = {
+      id: tempWorkerId,
+      role: isInfrastructureWorker ? 'infrastructure-worker' : 'worker',
+      conductorId: this.conductorSession.id,
+      task,
+      status: 'initializing',
+      sandboxId: sandbox.sandboxId,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+    };
+
+    this.workerSessions.set(tempWorkerId, placeholderSession);
+    this.conductorSession.activeWorkers.push(tempWorkerId);
+
+    console.log(`   📝 Placeholder worker session created: ${tempWorkerId}`);
+
+    // Generate system prompt based on worker type
+    const systemPrompt = isInfrastructureWorker
+      ? this.getInfrastructureWorkerSystemPrompt(task)
+      : this.getWorkerSystemPrompt(task);
+
+    // Send task to worker with custom environment variables
+    let finalResult: string = '';
+    let messageCount = 0;
+    let realWorkerId: string | undefined;
+
+    // Execute with system prompt passed as part of the prompt and env vars through sandbox
+    const fullPrompt = `${systemPrompt}\n\n${task}`;
+
+    const messageStream = executor.executeStream(fullPrompt, {
+      outputFormat: 'stream-json',
+      skipPermissions: true,
+    });
+
+    for await (const message of messageStream) {
+      messageCount++;
+
+      // Look for session ID in stream messages
+      // Session ID can appear in any message type
+      if ((message as any).session_id && !realWorkerId) {
+        const sessionId = (message as any).session_id as string;
+        realWorkerId = sessionId;
+        console.log(`   🎯 Got real worker CLI session ID: ${realWorkerId}`);
+
+        // Update session with real ID
+        const placeholderSess = this.workerSessions.get(tempWorkerId);
+        if (placeholderSess && realWorkerId) {
+          this.workerSessions.delete(tempWorkerId);
+          placeholderSess.id = realWorkerId;
+          this.workerSessions.set(realWorkerId, placeholderSess);
+          console.log(`   ✅ Updated worker session: ${tempWorkerId} → ${realWorkerId}`);
+
+          // Update conductor's active workers list
+          const index = this.conductorSession.activeWorkers.indexOf(tempWorkerId);
+          if (index !== -1 && realWorkerId) {
+            this.conductorSession.activeWorkers[index] = realWorkerId;
+          }
+
+          // Move worker detail message buffers and WebSocket clients
+          if (realWorkerId) {
+            moveWorkerDetailMessages(tempWorkerId, realWorkerId);
+          }
+        }
+      }
+
+      // Capture final result
+      if (message.type === 'result') {
+        if ((message as any).result) {
+          finalResult = (message as any).result;
+          console.log(`   ✅ Got worker final result`);
+        }
+      }
+
+      // Capture all messages to worker detail feed
+      const currentWorkerId = realWorkerId || tempWorkerId;
+      addWorkerDetailMessage({
+        timestamp: new Date(),
+        workerId: currentWorkerId,
+        sandboxId: sandbox.sandboxId,
+        messageType: message.type as any,
+        content: message,
+      });
+
+      // Update worker activity timestamp
+      const session = this.workerSessions.get(currentWorkerId);
+      if (session) {
+        session.lastActivityAt = new Date();
+      }
+    }
+
+    console.log(`   📊 Stream ended. Total messages: ${messageCount}, Worker ID: ${realWorkerId || 'NOT SET'}`);
+
+    // Use real ID if we got it, otherwise keep temp ID
+    const workerId = realWorkerId || tempWorkerId;
+
+    if (!realWorkerId) {
+      console.warn(`   ⚠️  Never got real session ID from CLI, using temp ID: ${tempWorkerId}`);
+    }
+
+    console.log(`   ✅ ${isInfrastructureWorker ? 'Infrastructure worker' : 'Worker'} ${workerId} completed initial task`);
+
+    this.events.onWorkerSpawned?.(workerId, task);
+
+    // Create CLIResponse from stream result for conversation loop
+    const initialResponse: CLIResponse = {
+      type: 'result',
+      subtype: 'success',
+      session_id: workerId,
+      total_cost_usd: 0,
+      is_error: false,
+      duration_ms: 0,
+      num_turns: 1,
+      result: finalResult,
+    };
+
+    // Start the conductor-worker conversation loop
+    await this.manageWorkerConversation(workerId, initialResponse);
+
+    return workerId;
+  }
+
+  /**
    * Manage ongoing conversation between conductor and worker.
    */
   private async manageWorkerConversation(workerId: string, workerResponse: CLIResponse): Promise<void> {
@@ -1102,6 +1744,12 @@ You: "Perfect, take your time."
         commands.push({ type: 'spawn-worker', payload: { task } });
       }
 
+      // SPAWN_INFRASTRUCTURE_WORKER: <task>
+      if (trimmed.startsWith('SPAWN_INFRASTRUCTURE_WORKER:')) {
+        const task = trimmed.slice('SPAWN_INFRASTRUCTURE_WORKER:'.length).trim();
+        commands.push({ type: 'spawn-infrastructure-worker', payload: { task } });
+      }
+
       // SEND_EMAIL: <to> | <subject> | <body>
       if (trimmed.startsWith('SEND_EMAIL:')) {
         const parts = trimmed.slice('SEND_EMAIL:'.length).split('|').map((s) => s.trim());
@@ -1171,6 +1819,12 @@ You: "Perfect, take your time."
           case 'spawn-worker':
             if (cmd.payload?.task) {
               await this.spawnWorker(cmd.payload.task);
+            }
+            break;
+
+          case 'spawn-infrastructure-worker':
+            if (cmd.payload?.task) {
+              await this.spawnInfrastructureWorker(cmd.payload.task);
             }
             break;
 

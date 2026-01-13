@@ -1,0 +1,82 @@
+/**
+ * E2B Template Configuration
+ *
+ * Manages different E2B template IDs for different worker types:
+ * - Standard workers: General task execution
+ * - Infrastructure workers: Can modify worker template repository
+ */
+
+export const E2B_TEMPLATES = {
+  /**
+   * Standard worker template
+   * Includes: Claude CLI, Node.js, basic utilities, Playwright (once installed)
+   */
+  WORKER: process.env.E2B_TEMPLATE_ID || '',
+
+  /**
+   * Infrastructure worker template
+   * Includes everything in WORKER plus: GitHub CLI, E2B CLI, Docker CLI, Git
+   * Can modify worker template repository and trigger rebuilds
+   */
+  INFRASTRUCTURE: process.env.E2B_INFRASTRUCTURE_TEMPLATE_ID || '',
+};
+
+/**
+ * Worker template repository configuration
+ * This is the repository that infrastructure workers can modify
+ */
+export const WORKER_TEMPLATE_CONFIG = {
+  /** GitHub repository in format "owner/repo" */
+  REPO: process.env.WORKER_TEMPLATE_REPO || 'noahbyrnes/claude-agent-studio-worker-template',
+
+  /** Branch to use for changes */
+  BRANCH: process.env.WORKER_TEMPLATE_BRANCH || 'main',
+
+  /** GitHub token for API access (infrastructure workers only) */
+  GITHUB_TOKEN: process.env.GITHUB_TOKEN || '',
+};
+
+/**
+ * Validate template configuration on startup
+ */
+export function validateTemplateConfig(): {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+} {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Check standard worker template
+  if (!E2B_TEMPLATES.WORKER) {
+    errors.push('E2B_TEMPLATE_ID not configured - worker spawning will fail');
+  }
+
+  // Check infrastructure template (warning only - not critical)
+  if (!E2B_TEMPLATES.INFRASTRUCTURE) {
+    warnings.push('E2B_INFRASTRUCTURE_TEMPLATE_ID not configured - infrastructure workers disabled');
+  }
+
+  // Check GitHub access (warning only - not critical)
+  if (!WORKER_TEMPLATE_CONFIG.GITHUB_TOKEN) {
+    warnings.push('GITHUB_TOKEN not configured - infrastructure workers cannot create PRs');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
+/**
+ * Get environment variables for infrastructure workers
+ */
+export function getInfrastructureWorkerEnv(): Record<string, string> {
+  return {
+    GITHUB_TOKEN: WORKER_TEMPLATE_CONFIG.GITHUB_TOKEN,
+    WORKER_TEMPLATE_REPO: WORKER_TEMPLATE_CONFIG.REPO,
+    WORKER_TEMPLATE_BRANCH: WORKER_TEMPLATE_CONFIG.BRANCH,
+    E2B_API_KEY: process.env.E2B_API_KEY || '',
+  };
+}
