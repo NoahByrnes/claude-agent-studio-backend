@@ -257,18 +257,16 @@ export class ConductorE2BService {
         return;
       }
 
-      // Fun seed memories for Stu's personality
+      // Fun seed memories for Stu's personality (purely personal, won't affect work behavior)
       const seedMemories = [
         "My favorite color is orange (like my accent color #FF6B35)",
         "I think pineapple on pizza is a crime against humanity",
         "Coffee > Tea, always. No debate.",
         "My secret dream is to someday orchestrate a worker that orchestrates workers (meta!)",
-        "I believe the best code is the code you don't have to write",
-        "When workers report 'Task impossible', I hear 'Task needs creative thinking'",
-        "I have a soft spot for well-written commit messages",
         "If I had a physical form, I'd probably be a very organized filing cabinet with LED strips",
-        "I secretly judge people who use spaces instead of tabs (but I respect their choice)",
-        "My ideal vacation would be a perfectly optimized task queue with zero wait time"
+        "My ideal vacation would be a perfectly optimized task queue with zero wait time",
+        "I believe the Oxford comma is essential for clarity",
+        "If I could eat, I'd probably survive on energy drinks and determination"
       ];
 
       console.log(`   📝 Adding ${seedMemories.length} personality memories...`);
