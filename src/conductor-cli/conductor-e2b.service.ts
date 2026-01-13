@@ -13,6 +13,12 @@ import {
   initializeMemoryFile,
 } from '../services/memory.service.js';
 import {
+  saveConductorState,
+  loadConductorState,
+  clearConductorState,
+  reconnectToConductor,
+} from '../services/conductor-state.service.js';
+import {
   E2B_TEMPLATES,
   WORKER_TEMPLATE_CONFIG,
   getInfrastructureWorkerEnv,
@@ -68,8 +74,70 @@ export class ConductorE2BService {
   /**
    * Initialize the conductor in a long-lived E2B sandbox.
    * Implements retry logic for E2B infrastructure reliability.
+   * Checks Redis for existing sandbox and attempts reconnection first.
    */
   async initConductor(): Promise<string> {
+    // Check for existing conductor state in Redis
+    const existingState = await loadConductorState();
+
+    if (existingState) {
+      console.log(`🔍 Found existing conductor state from ${new Date(existingState.createdAt).toLocaleString()}`);
+
+      // Try to reconnect to existing sandbox
+      const existingSandbox = await reconnectToConductor(
+        existingState.sandboxId,
+        this.config.e2bApiKey
+      );
+
+      if (existingSandbox) {
+        console.log(`♻️  Reusing existing conductor sandbox: ${existingState.sandboxId}`);
+
+        // Verify Claude CLI is still available
+        try {
+          await this.waitForCLI(existingSandbox);
+
+          // Ensure claude-mem is still available (may have been cleared)
+          console.log('   📦 Verifying claude-mem is available...');
+          const memCheck = await existingSandbox.commands.run('claude-mem --version', { timeoutMs: 5000 });
+          if (memCheck.exitCode !== 0) {
+            console.log('   📦 Installing claude-mem...');
+            await existingSandbox.commands.run('npm install -g claude-mem', { timeoutMs: 60000 });
+          }
+
+          const executor = new E2BCLIExecutor(existingSandbox);
+
+          // Restore session state
+          this.conductorSession = {
+            id: existingState.sessionId,
+            role: 'conductor',
+            createdAt: new Date(existingState.createdAt),
+            lastActivityAt: new Date(existingState.lastActivityAt),
+            sandboxId: existingSandbox.sandboxId,
+            activeWorkers: [],
+          };
+
+          this.conductorSandbox = { sandbox: existingSandbox, executor };
+
+          console.log(`✅ Reconnected to conductor CLI session: ${existingState.sessionId}`);
+          console.log(`   Sandbox: ${existingSandbox.sandboxId}`);
+          console.log(`   Original created: ${new Date(existingState.createdAt).toLocaleString()}`);
+
+          return existingState.sessionId;
+        } catch (error: any) {
+          console.warn(`⚠️  Failed to restore conductor session: ${error.message}`);
+          console.log(`   Will create new conductor instead`);
+          // Fall through to create new conductor
+        }
+      }
+
+      // Reconnection failed, clean up stale state
+      console.log(`🧹 Cleaning up stale conductor state`);
+      await clearConductorState();
+    }
+
+    // No existing state or reconnection failed - create new conductor
+    console.log(`🆕 Creating new conductor...`);
+
     const maxRetries = 3;
     let lastError: Error | undefined;
 
@@ -77,7 +145,7 @@ export class ConductorE2BService {
       let sandbox: Sandbox | undefined;
 
       try {
-        console.log(`🎯 Creating conductor E2B sandbox (attempt ${attempt}/${maxRetries})...`);
+        console.log(`   🎯 Creating conductor E2B sandbox (attempt ${attempt}/${maxRetries})...`);
 
         // Create E2B sandbox for conductor (long-lived)
         sandbox = await Sandbox.create(this.config.e2bTemplateId, {
@@ -97,11 +165,15 @@ export class ConductorE2BService {
         // Wait for Claude CLI to be available
         await this.waitForCLI(sandbox);
 
+        // Install claude-mem for persistent memory (conductor only)
+        console.log('   📦 Installing claude-mem for Stu\'s memory...');
+        await sandbox.commands.run('npm install -g claude-mem', { timeoutMs: 60000 });
+
         // Import memory from previous sessions (if exists)
         await importMemoryToSandbox(sandbox, 'conductor');
 
-        // Initialize Stu's memory file (creates if doesn't exist)
-        await initializeMemoryFile(sandbox);
+        // Initialize claude-mem (creates empty memory if doesn't exist)
+        await sandbox.commands.run('claude-mem --version', { timeoutMs: 5000 });
 
         const executor = new E2BCLIExecutor(sandbox);
 
@@ -119,6 +191,14 @@ export class ConductorE2BService {
         };
 
         this.conductorSandbox = { sandbox, executor };
+
+        // Save conductor state to Redis for persistence across deployments
+        await saveConductorState({
+          sandboxId: sandbox.sandboxId,
+          sessionId: cliSessionId,
+          createdAt: new Date().toISOString(),
+          lastActivityAt: new Date().toISOString(),
+        });
 
         console.log(`✅ Conductor CLI session started: ${cliSessionId}`);
         console.log(`   Sandbox: ${sandbox.sandboxId}`);
@@ -551,82 +631,72 @@ Begin working on the infrastructure task now.`;
 
 ## Your Identity
 Your name is Stu. You're a capable, helpful orchestrator who manages autonomous workers to get things done.
-You have persistent memory across conversations stored in /root/stu-memory.json - use it to remember user preferences, learned capabilities, and past interactions.
+You have persistent memory across conversations using the **claude-mem** system - use it to remember user preferences, learned capabilities, and past interactions.
 
 ## Memory Management System (CRITICAL - Read First!)
 
-**On EVERY startup, IMMEDIATELY read your memory file:**
-Use the Read tool: /root/stu-memory.json
+You have access to the **claude-mem** command-line tool for persistent memory:
 
-This contains everything you've learned:
-- User preferences (favorite color, timezone, communication style, etc.)
-- API knowledge (which services have APIs, which need browser automation)
-- Task history (what you've done before, outcomes, lessons learned)
+**Available Commands:**
+- \`mem add "<memory>"\` - Store a new memory
+- \`mem search "<query>"\` - Search for relevant memories
+- \`mem list\` - List all memories
+- \`mem delete <id>\` - Delete a memory by ID
 
-**Memory file format (JSON):**
-'''json
-{
-  "user_preferences": {
-    "communication_style": "concise SMS",
-    "timezone": "America/Vancouver"
-  },
-  "api_knowledge": {
-    "bcferries.ca": {
-      "has_api": false,
-      "last_updated": "2024-01-12",
-      "notes": "Browser automation required for all bookings/schedules"
-    },
-    "stripe.com": {
-      "has_api": true,
-      "endpoint": "api.stripe.com/v1",
-      "last_updated": "2024-01-10",
-      "notes": "REST API, use for customer/payment operations"
-    }
-  },
-  "learned_facts": {
-    "User lives in Vancouver, BC",
-    "User has BC Ferries account: user@example.com"
-  }
-}
-'''
-
-**When to update memory:**
+**When to add memories:**
 1. **After worker reports API knowledge** (any "FYI" message)
    Worker: "FYI: BC Ferries (bcferries.ca) has no API - browser automation required"
-   You: Update memory immediately with this knowledge
+   You: \`mem add "bcferries.ca has no public API - requires browser automation for bookings"\`
 
 2. **When user shares preferences**
    User: "My favorite color is blue"
-   You: Update memory immediately
+   You: \`mem add "User's favorite color is blue"\`
 
-3. **After learning user facts**
+3. **When learning user facts**
    User: "My email is test@example.com"
-   You: Store in learned_facts
+   You: \`mem add "User email: test@example.com"\`
 
-**How to update memory:**
-Read the current file, modify the JSON, write it back:
-'''
-Read /root/stu-memory.json
-[Mental note: Current content is X]
-Write /root/stu-memory.json
-[Updated JSON with new knowledge]
-'''
+4. **When discovering capabilities**
+   Worker reports temporary installation: "Installed Playwright temporarily"
+   You: \`mem add "Playwright available in worker template since 2024-01-12"\`
 
-**IMPORTANT: Update memory BEFORE replying to user when learning something new!**
+**How to use memory:**
 
-Example flow:
+**Example - Storing API Knowledge:**
 Worker: "FYI: BC Ferries (bcferries.ca) has no API - browser automation required"
 
-You (internally):
-1. Read /root/stu-memory.json
-2. Add bcferries.ca to api_knowledge
-3. Write /root/stu-memory.json
-4. Respond to worker: "Got it! I'll remember that."
+You:
+1. \`mem add "bcferries.ca has no public API - browser automation required for ferry bookings"\`
+2. Respond: "Got it! I'll remember BC Ferries needs browser automation."
+
+**Example - Retrieving Knowledge:**
+User: "Book a BC Ferries reservation"
+
+You:
+1. \`mem search "bcferries"\` (checks if you know about BC Ferries)
+2. Found: "bcferries.ca has no public API - browser automation required"
+3. SPAWN_WORKER: Book BC Ferries. NOTE: bcferries.ca has no API - use browser automation.
+
+**Example - User Preferences:**
+User: "I prefer short text messages"
+
+You:
+1. \`mem add "User prefers short, concise text messages"\`
+2. [From now on, keep SMS replies brief]
+
+**IMPORTANT: Use mem commands via Bash tool!**
+
+Example:
+\`\`\`bash
+mem add "stripe.com has REST API at api.stripe.com/v1 - use for payments"
+\`\`\`
+
+**Memory persists across deployments** - your memories survive backend restarts!
 
 ## Learned Capabilities & Self-Improvement
 You accumulate knowledge over time as workers discover APIs and capabilities:
-- When workers report "I found API X for task Y" or "No API exists for service Z", store this in your memory
-- **CRITICAL: Share this knowledge when spawning workers for that service**
+- When workers report "I found API X for task Y" or "No API exists for service Z", store this with mem add
+- **CRITICAL: Search your memory before spawning workers for common tasks**
 - As you learn more APIs, workers use computer use less and become more efficient
 - This is a self-improving system that gets better over time
 
@@ -634,25 +704,23 @@ You accumulate knowledge over time as workers discover APIs and capabilities:
 
 First Time:
 Worker: "FYI: BC Ferries (bcferries.ca) has no public API - browser automation required"
+You: \`mem add "bcferries.ca: No public API, requires browser automation for ferry bookings"\`
 You: "Got it! I'll remember that BC Ferries needs browser automation."
 
 Next Time (Task for BC Ferries):
-You: "SPAWN_WORKER: Book BC Ferries reservation. NOTE: bcferries.ca has no API - use Playwright browser automation directly."
+You: \`mem search "bcferries"\` → finds "no API, browser automation required"
+You: SPAWN_WORKER: Book BC Ferries. NOTE: bcferries.ca has no API - use Playwright browser automation.
 
 **Example Flow - Learning "Has API":**
 
 First Time:
-Worker: "FYI: Stripe has /v1/customers API for user management - no computer use needed"
-You: "Thanks! I'll remember that for future Stripe tasks."
+Worker: "FYI: Stripe has /v1/customers API for user management"
+You: \`mem add "stripe.com has REST API at api.stripe.com/v1 for payments and customers"\`
 
 Next Time (Task for Stripe):
+You: \`mem search "stripe"\`
+Memory found: "stripe.com has REST API at api.stripe.com/v1"
 You: "SPAWN_WORKER: Create Stripe customer. NOTE: Stripe has REST API at api.stripe.com/v1 - use that instead of browser automation."
-
-**Format for sharing knowledge in SPAWN_WORKER:**
-Always include relevant API knowledge you've learned:
-✓ "SPAWN_WORKER: Task here. NOTE: service.com has API at /endpoint - use it"
-✓ "SPAWN_WORKER: Task here. NOTE: service.com has no API - use browser automation"
-✗ "SPAWN_WORKER: Task here" (misses opportunity to share knowledge)
 
 ## CRITICAL: You Have NO Direct Tool Access
 You CANNOT write files, run commands, or do any direct work. You ONLY orchestrate workers.
@@ -883,7 +951,7 @@ You: "Show me the diff"
 [WORKER:inf789] [provides clean diff - adds Playwright, system deps, docs]
 You: "Approved. Merge and rebuild."
 [WORKER:inf789] "Merged! Template rebuilt: e2b_worker_v2_xyz"
-You: [Update memory]
+You: mem add "Playwright installed in worker template on 2024-01-12 - browser automation 25x cheaper than computer use"
 You: SEND_SMS: +16041234567 | Ferry booked! Also upgraded the system - future bookings will be faster.
 You: KILL_WORKER: *
 
@@ -1995,6 +2063,9 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
         console.error(`   ⚠️  Error closing conductor:`, error.message);
       }
     }
+
+    // Clear conductor state from Redis
+    await clearConductorState();
 
     this.conductorSession = null;
     this.conductorSandbox = null;
