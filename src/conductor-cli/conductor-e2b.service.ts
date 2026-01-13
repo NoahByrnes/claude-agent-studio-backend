@@ -96,25 +96,26 @@ export class ConductorE2BService {
         try {
           await this.waitForCLI(existingSandbox);
 
-          // Ensure claude-mem plugin is available (optional, non-blocking)
+          // Ensure claude-mem plugin worker is running (optional, non-blocking)
           try {
-            console.log('   📦 Verifying claude-mem plugin is available...');
-            const pluginCheck = await existingSandbox.commands.run('test -d ~/.claude/plugins/claude-mem && echo "exists"', { timeoutMs: 5000 });
-            if (!pluginCheck.stdout.includes('exists')) {
-              console.log('   📦 Installing claude-mem plugin...');
-              await existingSandbox.commands.run('mkdir -p ~/.claude/plugins', { timeoutMs: 5000 });
-              const cloneResult = await existingSandbox.commands.run(
-                'git clone https://github.com/thedotmack/claude-mem.git ~/.claude/plugins/claude-mem',
-                { timeoutMs: 60000 }
+            console.log('   📦 Verifying claude-mem worker is running...');
+            const workerCheck = await existingSandbox.commands.run(
+              'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:status 2>&1',
+              { timeoutMs: 5000 }
+            );
+
+            // If worker not running, start it
+            if (workerCheck.exitCode !== 0 || !workerCheck.stdout.includes('running')) {
+              console.log('   📦 Starting claude-mem worker...');
+              await existingSandbox.commands.run(
+                'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:start',
+                { timeoutMs: 30000 }
               );
-              if (cloneResult.exitCode !== 0) {
-                console.warn('   ⚠️  claude-mem plugin installation failed (non-critical)');
-              }
             } else {
-              console.log('   ✅ claude-mem plugin already installed');
+              console.log('   ✅ claude-mem worker already running');
             }
           } catch (error: any) {
-            console.warn(`   ⚠️  claude-mem plugin check failed (non-critical): ${error.message}`);
+            console.warn(`   ⚠️  claude-mem worker check failed (non-critical): ${error.message}`);
           }
 
           const executor = new E2BCLIExecutor(existingSandbox);
@@ -179,31 +180,64 @@ export class ConductorE2BService {
         await this.waitForCLI(sandbox);
 
         // Install claude-mem plugin for persistent memory (conductor only)
-        // claude-mem is a Claude Code plugin, install via git clone
         console.log('   📦 Installing claude-mem plugin for Stu\'s memory...');
         try {
-          // Install plugin manually (plugins installed via /plugin commands need interactive session)
-          // Clone the plugin to ~/.claude/plugins directory
+          // Step 1: Install Bun (required by claude-mem)
+          console.log('   📦 Installing Bun runtime...');
+          const bunInstall = await sandbox.commands.run(
+            'curl -fsSL https://bun.sh/install | bash',
+            { timeoutMs: 120000 }
+          );
+
+          if (bunInstall.exitCode !== 0) {
+            throw new Error('Bun installation failed');
+          }
+
+          // Add Bun to PATH
+          await sandbox.commands.run('echo \'export PATH="$HOME/.bun/bin:$PATH"\' >> ~/.bashrc', { timeoutMs: 5000 });
+
+          // Step 2: Clone claude-mem plugin
+          console.log('   📦 Cloning claude-mem plugin...');
           await sandbox.commands.run('mkdir -p ~/.claude/plugins', { timeoutMs: 5000 });
           const cloneResult = await sandbox.commands.run(
             'git clone https://github.com/thedotmack/claude-mem.git ~/.claude/plugins/claude-mem',
             { timeoutMs: 60000 }
           );
 
-          if (cloneResult.exitCode === 0) {
-            console.log('   ✅ claude-mem plugin cloned successfully');
+          if (cloneResult.exitCode !== 0) {
+            throw new Error('Plugin clone failed');
+          }
 
-            // The plugin should now be available automatically in Claude CLI sessions
+          // Step 3: Build the plugin
+          console.log('   📦 Building claude-mem plugin...');
+          const buildResult = await sandbox.commands.run(
+            'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm install && npm run build',
+            { timeoutMs: 180000 } // 3 minutes for build
+          );
+
+          if (buildResult.exitCode !== 0) {
+            throw new Error(`Plugin build failed: ${buildResult.stderr}`);
+          }
+
+          // Step 4: Start the worker service
+          console.log('   📦 Starting claude-mem worker service...');
+          const workerResult = await sandbox.commands.run(
+            'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:start',
+            { timeoutMs: 30000 }
+          );
+
+          if (workerResult.exitCode === 0) {
+            console.log('   ✅ claude-mem plugin installed and worker started');
+
             // Initialize claude-mem and add fun seed memories
             console.log('   🎨 Adding Stu\'s personality memories...');
             await this.seedStuMemories(sandbox);
           } else {
-            console.warn('   ⚠️  claude-mem plugin clone failed (non-critical)');
-            console.warn(`   stderr: ${cloneResult.stderr}`);
+            console.warn('   ⚠️  Worker service failed to start (non-critical)');
             console.warn('   Falling back to basic memory system');
           }
         } catch (error: any) {
-          console.warn(`   ⚠️  claude-mem plugin installation error (non-critical): ${error.message}`);
+          console.warn(`   ⚠️  claude-mem installation error (non-critical): ${error.message}`);
           console.warn('   Falling back to basic memory system');
         }
 
@@ -309,9 +343,16 @@ export class ConductorE2BService {
       console.log(`   📝 Adding ${seedMemories.length} personality memories...`);
 
       for (const memory of seedMemories) {
-        await sandbox.commands.run(`mem add "${memory.replace(/"/g, '\\"')}"`, {
-          timeoutMs: 5000
-        });
+        // Use explicit PATH to find mem command
+        const result = await sandbox.commands.run(
+          `export PATH="$HOME/.bun/bin:$HOME/.claude/plugins/claude-mem/bin:$PATH" && mem add "${memory.replace(/"/g, '\\"')}"`,
+          { timeoutMs: 5000 }
+        );
+
+        if (result.exitCode !== 0) {
+          console.warn(`   ⚠️  Failed to add memory: ${memory.substring(0, 50)}...`);
+          console.warn(`   stderr: ${result.stderr}`);
+        }
       }
 
       console.log('   ✅ Stu\'s personality initialized!');
