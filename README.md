@@ -26,6 +26,17 @@ The system gets smarter and cheaper over time:
 - Future tasks use APIs instead of expensive computer use
 - 50-250x cost reduction as knowledge accumulates
 
+### Infrastructure Workers (NEW!) 🔧
+**Autonomous system modification** - Workers can now modify themselves:
+- Infrastructure workers modify the worker template repository
+- Add new capabilities (Playwright, tools, packages) automatically
+- Stu reviews all changes via PRs before approval
+- System autonomously optimizes and grows
+
+**➡️ [Quick Start Guide](./START_HERE.md)** - Enable in ~15 minutes!
+
+See [INFRASTRUCTURE_WORKERS_IMPLEMENTATION.md](./INFRASTRUCTURE_WORKERS_IMPLEMENTATION.md) for details.
+
 ## Architecture
 
 ### Conductor-Worker Pattern
