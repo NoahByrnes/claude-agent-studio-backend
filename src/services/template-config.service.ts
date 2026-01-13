@@ -6,9 +6,28 @@
  */
 
 import { redis as redisClient } from '../lib/redis.js';
-import { db } from '../lib/db.js';
+import postgres from 'postgres';
 
 const REDIS_TEMPLATE_KEY = 'e2b:templates';
+
+// Create postgres client for raw SQL queries
+const connectionString = process.env.DATABASE_URL || '';
+let sql: ReturnType<typeof postgres> | null = null;
+
+if (process.env.DATABASE_URL) {
+  try {
+    sql = postgres(process.env.DATABASE_URL, {
+      ssl: 'require',
+      connect_timeout: 10,
+      prepare: false,
+    });
+  } catch (error: any) {
+    console.warn('⚠️  Failed to connect to PostgreSQL:', error.message);
+  }
+}
+
+// Use a more compatible variable name
+const sqlClient = sql;
 
 export interface TemplateConfig {
   conductor: string;
@@ -36,14 +55,14 @@ export async function getTemplateConfig(): Promise<TemplateConfig> {
   }
 
   // Try PostgreSQL
-  if (db) {
+  if (sqlClient) {
     try {
-      const result = await db.query(
-        'SELECT config FROM template_config WHERE id = $1',
-        ['default']
-      );
-      if (result.rows.length > 0) {
-        const config = result.rows[0].config as TemplateConfig;
+      const result = await sqlClient`
+        SELECT config FROM template_config WHERE id = 'default'
+      `;
+
+      if (result.length > 0) {
+        const config = result[0].config as TemplateConfig;
 
         // Cache in Redis for next time
         if (redisClient) {
@@ -97,15 +116,14 @@ export async function updateTemplateConfig(
   }
 
   // Update PostgreSQL (persistent storage)
-  if (db) {
+  if (sqlClient) {
     try {
-      await db.query(
-        `INSERT INTO template_config (id, config, updated_at)
-         VALUES ($1, $2, NOW())
-         ON CONFLICT (id)
-         DO UPDATE SET config = $2, updated_at = NOW()`,
-        ['default', newConfig]
-      );
+      await sqlClient`
+        INSERT INTO template_config (id, config, updated_at)
+        VALUES ('default', ${newConfig}::jsonb, NOW())
+        ON CONFLICT (id)
+        DO UPDATE SET config = ${newConfig}::jsonb, updated_at = NOW()
+      `;
       console.log('✅ Template config saved to PostgreSQL');
     } catch (error: any) {
       console.error('❌ Failed to save template config to PostgreSQL:', error.message);
@@ -163,24 +181,27 @@ export async function getTemplateId(
  * Initialize template config table in PostgreSQL
  */
 export async function initializeTemplateConfigTable(): Promise<void> {
-  if (!db) {
+  if (!sqlClient) {
     console.log('ℹ️  PostgreSQL not available, skipping template_config table initialization');
     return;
   }
 
   try {
-    await db.query(`
+    await sqlClient`
       CREATE TABLE IF NOT EXISTS template_config (
         id TEXT PRIMARY KEY,
         config JSONB NOT NULL,
         updated_at TIMESTAMP DEFAULT NOW()
       )
-    `);
+    `;
     console.log('✅ template_config table initialized');
 
     // Initialize with current env vars if no config exists
-    const result = await db.query('SELECT id FROM template_config WHERE id = $1', ['default']);
-    if (result.rows.length === 0) {
+    const result = await sqlClient`
+      SELECT id FROM template_config WHERE id = 'default'
+    `;
+
+    if (result.length === 0) {
       const initialConfig: TemplateConfig = {
         conductor: process.env.E2B_CONDUCTOR_TEMPLATE_ID || '',
         worker: process.env.E2B_TEMPLATE_ID || '',
@@ -189,10 +210,10 @@ export async function initializeTemplateConfigTable(): Promise<void> {
         updatedBy: 'manual',
       };
 
-      await db.query(
-        'INSERT INTO template_config (id, config) VALUES ($1, $2)',
-        ['default', initialConfig]
-      );
+      await sqlClient`
+        INSERT INTO template_config (id, config)
+        VALUES ('default', ${initialConfig}::jsonb)
+      `;
       console.log('✅ Template config initialized with environment variables');
     }
   } catch (error: any) {
