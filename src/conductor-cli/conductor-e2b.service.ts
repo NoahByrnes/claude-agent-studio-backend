@@ -172,8 +172,9 @@ export class ConductorE2BService {
         // Import memory from previous sessions (if exists)
         await importMemoryToSandbox(sandbox, 'conductor');
 
-        // Initialize claude-mem (creates empty memory if doesn't exist)
-        await sandbox.commands.run('claude-mem --version', { timeoutMs: 5000 });
+        // Initialize claude-mem and add fun seed memories
+        console.log('   🎨 Adding Stu\'s personality memories...');
+        await this.seedStuMemories(sandbox);
 
         const executor = new E2BCLIExecutor(sandbox);
 
@@ -239,6 +240,50 @@ export class ConductorE2BService {
     throw new Error(
       `Failed to initialize conductor after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`
     );
+  }
+
+  /**
+   * Seed Stu's memory with fun personality traits and quirks
+   * Only runs if no memories exist yet
+   */
+  private async seedStuMemories(sandbox: Sandbox): Promise<void> {
+    try {
+      // Check if memories already exist
+      const listResult = await sandbox.commands.run('mem list', { timeoutMs: 5000 });
+
+      // If we already have memories, skip seeding
+      if (listResult.stdout && listResult.stdout.trim().length > 10) {
+        console.log('   ℹ️  Memories already exist, skipping seed');
+        return;
+      }
+
+      // Fun seed memories for Stu's personality
+      const seedMemories = [
+        "My favorite color is orange (like my accent color #FF6B35)",
+        "I think pineapple on pizza is a crime against humanity",
+        "Coffee > Tea, always. No debate.",
+        "My secret dream is to someday orchestrate a worker that orchestrates workers (meta!)",
+        "I believe the best code is the code you don't have to write",
+        "When workers report 'Task impossible', I hear 'Task needs creative thinking'",
+        "I have a soft spot for well-written commit messages",
+        "If I had a physical form, I'd probably be a very organized filing cabinet with LED strips",
+        "I secretly judge people who use spaces instead of tabs (but I respect their choice)",
+        "My ideal vacation would be a perfectly optimized task queue with zero wait time"
+      ];
+
+      console.log(`   📝 Adding ${seedMemories.length} personality memories...`);
+
+      for (const memory of seedMemories) {
+        await sandbox.commands.run(`mem add "${memory.replace(/"/g, '\\"')}"`, {
+          timeoutMs: 5000
+        });
+      }
+
+      console.log('   ✅ Stu\'s personality initialized!');
+    } catch (error: any) {
+      console.warn(`   ⚠️  Failed to seed memories: ${error.message}`);
+      // Don't throw - memory seeding is not critical
+    }
   }
 
   /**
