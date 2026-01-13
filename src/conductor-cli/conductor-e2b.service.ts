@@ -1477,7 +1477,7 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
             type: 'cli-session',
           },
           // Set environment variables properly (persists across all commands)
-          envVars: customEnv,
+          envs: customEnv,
           timeoutMs: 60 * 60 * 1000, // 1 hour
           requestTimeoutMs: 300000, // 5 minutes
         });
