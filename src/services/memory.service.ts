@@ -46,26 +46,39 @@ export async function exportMemoryFromSandbox(
   try {
     console.log(`📦 Exporting memory from sandbox ${sandbox.sandboxId}...`);
 
-    // Check if .claude-mem directory exists first
-    const checkResult = await sandbox.commands.run('test -d /root/.claude-mem && echo "exists" || echo "missing"');
+    // Check if stu-memory.json exists (primary memory file)
+    const stuMemoryCheck = await sandbox.commands.run('test -f /root/stu-memory.json && echo "exists" || echo "missing"');
+    const hasStuMemory = stuMemoryCheck.stdout.trim() === 'exists';
 
-    if (checkResult.stdout.trim() === 'missing') {
-      console.log('ℹ️  No .claude-mem directory found in sandbox (Claude CLI may not have created it yet)');
+    // Check if .claude-mem directory exists (optional, for claude-mem plugin)
+    const claudeMemCheck = await sandbox.commands.run('test -d /root/.claude-mem && echo "exists" || echo "missing"');
+    const hasClaudeMem = claudeMemCheck.stdout.trim() === 'exists';
+
+    if (!hasStuMemory && !hasClaudeMem) {
+      console.log('ℹ️  No memory files found in sandbox (neither stu-memory.json nor .claude-mem)');
       return;
     }
 
-    // Create tarball of memory directory inside sandbox
-    const tarResult = await sandbox.commands.run(
-      'cd /root && tar -czf /tmp/claude-mem.tar.gz .claude-mem'
-    );
+    // Create tarball of memory files inside sandbox
+    let tarCommand = 'cd /root && tar -czf /tmp/conductor-memory.tar.gz';
+    if (hasStuMemory) {
+      tarCommand += ' stu-memory.json';
+      console.log('   Including stu-memory.json in backup');
+    }
+    if (hasClaudeMem) {
+      tarCommand += ' .claude-mem';
+      console.log('   Including .claude-mem directory in backup');
+    }
+
+    const tarResult = await sandbox.commands.run(tarCommand);
 
     if (tarResult.exitCode !== 0) {
-      console.log('ℹ️  Failed to create memory tarball (directory may be empty)');
+      console.log('ℹ️  Failed to create memory tarball');
       return;
     }
 
     // Download the tarball
-    const memoryData = await sandbox.files.read('/tmp/claude-mem.tar.gz');
+    const memoryData = await sandbox.files.read('/tmp/conductor-memory.tar.gz');
     const buffer = Buffer.from(memoryData);
 
     // Try Redis first (for production persistence across deployments)
@@ -74,7 +87,7 @@ export async function exportMemoryFromSandbox(
       try {
         const redisKey = `${REDIS_MEMORY_KEY_PREFIX}${conductorId}`;
         await redis.set(redisKey, buffer.toString('base64'), 'EX', 7 * 24 * 60 * 60); // Expire after 7 days
-        console.log(`✅ Memory exported to Redis: ${redisKey}`);
+        console.log(`✅ Memory exported to Redis: ${redisKey} (${buffer.length} bytes)`);
         return;
       } catch (redisError: any) {
         console.warn(`⚠️  Redis export failed, falling back to local: ${redisError.message}`);
@@ -135,11 +148,11 @@ export async function importMemoryToSandbox(
     console.log(`📥 Importing memory from ${source}...`);
 
     // Upload to sandbox (convert Buffer to ArrayBuffer)
-    await sandbox.files.write('/tmp/claude-mem.tar.gz', memoryBuffer.buffer as ArrayBuffer);
+    await sandbox.files.write('/tmp/conductor-memory.tar.gz', memoryBuffer.buffer as ArrayBuffer);
 
-    // Extract in sandbox
+    // Extract in sandbox (includes stu-memory.json and/or .claude-mem)
     await sandbox.commands.run(
-      'cd /root && tar -xzf /tmp/claude-mem.tar.gz && rm /tmp/claude-mem.tar.gz'
+      'cd /root && tar -xzf /tmp/conductor-memory.tar.gz && rm /tmp/conductor-memory.tar.gz'
     );
 
     console.log(`✅ Memory imported to sandbox ${sandbox.sandboxId}`);
@@ -194,6 +207,39 @@ export async function getMemoryBackupInfo(conductorId: string): Promise<{
     };
   } catch {
     return { exists: false };
+  }
+}
+
+/**
+ * Initialize Stu's memory file in sandbox if it doesn't exist
+ */
+export async function initializeMemoryFile(sandbox: Sandbox): Promise<void> {
+  try {
+    console.log(`📝 Initializing Stu's memory file...`);
+
+    // Check if memory file exists
+    const checkResult = await sandbox.commands.run('test -f /root/stu-memory.json && echo "exists" || echo "missing"');
+
+    if (checkResult.stdout.trim() === 'missing') {
+      console.log('   Creating initial memory file...');
+
+      // Create initial empty memory structure
+      const initialMemory = {
+        user_preferences: {},
+        api_knowledge: {},
+        learned_facts: [],
+        last_updated: new Date().toISOString()
+      };
+
+      // Write initial memory file to sandbox
+      await sandbox.files.write('/root/stu-memory.json', JSON.stringify(initialMemory, null, 2));
+      console.log('   ✅ Memory file initialized');
+    } else {
+      console.log('   ✅ Memory file already exists');
+    }
+  } catch (error: any) {
+    console.error('❌ Failed to initialize memory file:', error.message);
+    // Don't throw - memory initialization is not critical to sandbox startup
   }
 }
 
