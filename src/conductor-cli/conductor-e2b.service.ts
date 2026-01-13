@@ -161,8 +161,11 @@ export class ConductorE2BService {
       try {
         console.log(`   🎯 Creating conductor E2B sandbox (attempt ${attempt}/${maxRetries})...`);
 
-        // Create E2B sandbox for conductor (long-lived)
-        sandbox = await Sandbox.create(this.config.e2bTemplateId, {
+        // Create E2B sandbox for conductor using conductor-specific template
+        const conductorTemplateId = E2B_TEMPLATES.CONDUCTOR || this.config.e2bTemplateId;
+        console.log(`   Using template: ${conductorTemplateId}`);
+
+        sandbox = await Sandbox.create(conductorTemplateId, {
           apiKey: this.config.e2bApiKey,
           metadata: {
             role: 'conductor',
@@ -170,7 +173,7 @@ export class ConductorE2BService {
           },
           // Conductor lives for 1 hour (E2B max limit)
           timeoutMs: 60 * 60 * 1000,
-          // Allow 5 minutes for sandbox creation (template is large with Claude CLI)
+          // Allow 5 minutes for sandbox creation
           requestTimeoutMs: 300000,
         });
 
@@ -179,65 +182,27 @@ export class ConductorE2BService {
         // Wait for Claude CLI to be available
         await this.waitForCLI(sandbox);
 
-        // Install claude-mem plugin for persistent memory (conductor only)
-        console.log('   📦 Installing claude-mem plugin for Stu\'s memory...');
+        // Start claude-mem worker service (plugin is pre-installed in template)
+        console.log('   📦 Starting claude-mem worker service...');
         try {
-          // Step 1: Install Bun (required by claude-mem)
-          console.log('   📦 Installing Bun runtime...');
-          const bunInstall = await sandbox.commands.run(
-            'curl -fsSL https://bun.sh/install | bash',
-            { timeoutMs: 120000 }
-          );
-
-          if (bunInstall.exitCode !== 0) {
-            throw new Error('Bun installation failed');
-          }
-
-          // Add Bun to PATH
-          await sandbox.commands.run('echo \'export PATH="$HOME/.bun/bin:$PATH"\' >> ~/.bashrc', { timeoutMs: 5000 });
-
-          // Step 2: Clone claude-mem plugin
-          console.log('   📦 Cloning claude-mem plugin...');
-          await sandbox.commands.run('mkdir -p ~/.claude/plugins', { timeoutMs: 5000 });
-          const cloneResult = await sandbox.commands.run(
-            'git clone https://github.com/thedotmack/claude-mem.git ~/.claude/plugins/claude-mem',
-            { timeoutMs: 60000 }
-          );
-
-          if (cloneResult.exitCode !== 0) {
-            throw new Error('Plugin clone failed');
-          }
-
-          // Step 3: Build the plugin
-          console.log('   📦 Building claude-mem plugin...');
-          const buildResult = await sandbox.commands.run(
-            'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm install && npm run build',
-            { timeoutMs: 180000 } // 3 minutes for build
-          );
-
-          if (buildResult.exitCode !== 0) {
-            throw new Error(`Plugin build failed: ${buildResult.stderr}`);
-          }
-
-          // Step 4: Start the worker service
-          console.log('   📦 Starting claude-mem worker service...');
           const workerResult = await sandbox.commands.run(
             'cd ~/.claude/plugins/claude-mem && export PATH="$HOME/.bun/bin:$PATH" && npm run worker:start',
             { timeoutMs: 30000 }
           );
 
           if (workerResult.exitCode === 0) {
-            console.log('   ✅ claude-mem plugin installed and worker started');
+            console.log('   ✅ claude-mem worker started');
 
             // Initialize claude-mem and add fun seed memories
             console.log('   🎨 Adding Stu\'s personality memories...');
             await this.seedStuMemories(sandbox);
           } else {
             console.warn('   ⚠️  Worker service failed to start (non-critical)');
+            console.warn(`   stderr: ${workerResult.stderr}`);
             console.warn('   Falling back to basic memory system');
           }
         } catch (error: any) {
-          console.warn(`   ⚠️  claude-mem installation error (non-critical): ${error.message}`);
+          console.warn(`   ⚠️  claude-mem worker start error (non-critical): ${error.message}`);
           console.warn('   Falling back to basic memory system');
         }
 

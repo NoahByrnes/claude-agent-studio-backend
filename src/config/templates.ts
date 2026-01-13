@@ -8,6 +8,13 @@
 
 export const E2B_TEMPLATES = {
   /**
+   * Conductor template (Stu)
+   * Includes: Claude CLI, Node.js, Bun, claude-mem plugin (pre-built)
+   * Used for the single persistent conductor instance
+   */
+  CONDUCTOR: process.env.E2B_CONDUCTOR_TEMPLATE_ID || '',
+
+  /**
    * Standard worker template
    * Includes: Claude CLI, Node.js, basic utilities, Playwright (once installed)
    */
