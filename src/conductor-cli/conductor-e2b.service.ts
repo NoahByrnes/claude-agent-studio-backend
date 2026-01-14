@@ -121,23 +121,37 @@ export class ConductorE2BService {
 
           const executor = new E2BCLIExecutor(existingSandbox);
 
-          // Restore session state
+          // CRITICAL FIX: Re-send system prompt to ensure conductor has capabilities
+          // CLI sessions may not persist properly, so we start a fresh session
+          console.log('   🔄 Re-initializing CLI session with system prompt...');
+          const systemPrompt = this.config.systemPrompt || this.getDefaultConductorPrompt();
+          const newSessionId = await executor.startSession(systemPrompt);
+
+          // Update session state with new session ID
           this.conductorSession = {
-            id: existingState.sessionId,
+            id: newSessionId,
             role: 'conductor',
-            createdAt: new Date(existingState.createdAt),
-            lastActivityAt: new Date(existingState.lastActivityAt),
+            createdAt: new Date(), // Fresh session
+            lastActivityAt: new Date(),
             sandboxId: existingSandbox.sandboxId,
             activeWorkers: [],
           };
 
           this.conductorSandbox = { sandbox: existingSandbox, executor };
 
-          console.log(`✅ Reconnected to conductor CLI session: ${existingState.sessionId}`);
-          console.log(`   Sandbox: ${existingSandbox.sandboxId}`);
-          console.log(`   Original created: ${new Date(existingState.createdAt).toLocaleString()}`);
+          // Save updated state with new session ID
+          await saveConductorState({
+            sandboxId: existingSandbox.sandboxId,
+            sessionId: newSessionId,
+            createdAt: new Date().toISOString(),
+            lastActivityAt: new Date().toISOString(),
+          });
 
-          return existingState.sessionId;
+          console.log(`✅ Reconnected to conductor with fresh CLI session: ${newSessionId}`);
+          console.log(`   Sandbox: ${existingSandbox.sandboxId}`);
+          console.log(`   System prompt reloaded`);
+
+          return newSessionId;
         } catch (error: any) {
           console.warn(`⚠️  Failed to restore conductor session: ${error.message}`);
           console.log(`   Will create new conductor instead`);
