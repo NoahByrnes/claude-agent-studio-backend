@@ -33,6 +33,10 @@ export class E2BCLIExecutor {
     const args = this.buildArgs(prompt, { ...options, outputFormat: 'json' });
     const command = `claude ${args.join(' ')}`;
 
+    // Log command structure (but not full prompt to avoid spam)
+    const argsSummary = args.filter(a => !a.includes(prompt.substring(0, 50))).join(' ');
+    console.log(`   🚀 Executing: claude ${argsSummary} '<prompt ${prompt.length} chars>'`);
+
     // No command-level timeout - let conductor manage worker lifecycle
     // Use sandbox lifetime as timeout (1 hour for Hobby tier)
     const timeout = options.timeout || 3600000; // 1 hour, matches sandbox lifetime
@@ -166,7 +170,12 @@ export class E2BCLIExecutor {
    * Start a new CLI session and return its ID.
    */
   async startSession(systemPrompt: string, options: ExecuteOptions = {}): Promise<string> {
+    console.log(`   📋 Starting CLI session with system prompt (${systemPrompt.length} chars)`);
+    console.log(`   First 200 chars: ${systemPrompt.substring(0, 200)}...`);
+    console.log(`   Last 200 chars: ...${systemPrompt.substring(systemPrompt.length - 200)}`);
+
     const response = await this.execute(systemPrompt, options);
+    console.log(`   ✅ CLI session started: ${response.session_id}`);
     return response.session_id;
   }
 

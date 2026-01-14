@@ -224,6 +224,23 @@ export class ConductorE2BService {
 
         // Start conductor CLI session
         const systemPrompt = this.config.systemPrompt || this.getDefaultConductorPrompt();
+
+        // VALIDATION: Verify system prompt contains critical commands
+        console.log('   🔍 Validating system prompt...');
+        console.log(`   System prompt length: ${systemPrompt.length} characters`);
+        const hasSendSMS = systemPrompt.includes('SEND_SMS');
+        const hasSendEmail = systemPrompt.includes('SEND_EMAIL');
+        const hasSpawnWorker = systemPrompt.includes('SPAWN_WORKER');
+        console.log(`   Contains SEND_SMS: ${hasSendSMS}`);
+        console.log(`   Contains SEND_EMAIL: ${hasSendEmail}`);
+        console.log(`   Contains SPAWN_WORKER: ${hasSpawnWorker}`);
+
+        if (!hasSendSMS || !hasSendEmail || !hasSpawnWorker) {
+          console.error('   ❌ CRITICAL: System prompt missing essential commands!');
+          throw new Error('System prompt validation failed - missing commands');
+        }
+
+        console.log('   ✅ System prompt validation passed');
         const cliSessionId = await executor.startSession(systemPrompt);
 
         this.conductorSession = {
