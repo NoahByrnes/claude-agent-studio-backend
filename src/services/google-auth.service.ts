@@ -19,19 +19,28 @@ const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost
 
 // Google API Scopes
 export const GOOGLE_SCOPES = {
+  // User info
+  USERINFO_EMAIL: 'https://www.googleapis.com/auth/userinfo.email',
+  USERINFO_PROFILE: 'https://www.googleapis.com/auth/userinfo.profile',
+  // Gmail
   GMAIL_READ: 'https://www.googleapis.com/auth/gmail.readonly',
   GMAIL_SEND: 'https://www.googleapis.com/auth/gmail.send',
   GMAIL_MODIFY: 'https://www.googleapis.com/auth/gmail.modify',
+  // Docs
   DOCS_READ: 'https://www.googleapis.com/auth/documents.readonly',
   DOCS_WRITE: 'https://www.googleapis.com/auth/documents',
+  // Drive
   DRIVE_READ: 'https://www.googleapis.com/auth/drive.readonly',
   DRIVE_FILE: 'https://www.googleapis.com/auth/drive.file',
+  // Calendar
   CALENDAR_READ: 'https://www.googleapis.com/auth/calendar.readonly',
   CALENDAR_WRITE: 'https://www.googleapis.com/auth/calendar.events',
 };
 
 // Default scopes for Stu's Google account
 const DEFAULT_SCOPES = [
+  GOOGLE_SCOPES.USERINFO_EMAIL,
+  GOOGLE_SCOPES.USERINFO_PROFILE,
   GOOGLE_SCOPES.GMAIL_READ,
   GOOGLE_SCOPES.GMAIL_SEND,
   GOOGLE_SCOPES.GMAIL_MODIFY,
