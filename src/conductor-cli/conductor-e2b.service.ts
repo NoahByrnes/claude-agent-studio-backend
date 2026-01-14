@@ -2184,8 +2184,54 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
     const commands: DetectedCommand[] = [];
     const lines = output.split('\n');
 
+    // First pass: find SEND_EMAIL commands and capture multi-line bodies
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const trimmed = line.replace(/\*\*/g, '').replace(/\*/g, '').trim();
+
+      // SEND_EMAIL: <to> | <subject> | <body> (can be multi-line)
+      if (trimmed.startsWith('SEND_EMAIL:')) {
+        const firstLineParts = trimmed.slice('SEND_EMAIL:'.length).split('|');
+        if (firstLineParts.length >= 3) {
+          const to = firstLineParts[0].trim();
+          const subject = firstLineParts[1].trim();
+          let body = firstLineParts.slice(2).join('|').trim();
+
+          // Capture additional lines until next command or end
+          i++;
+          while (i < lines.length) {
+            const nextLine = lines[i].replace(/\*\*/g, '').replace(/\*/g, '').trim();
+            // Stop if we hit another command
+            if (nextLine.startsWith('SPAWN_WORKER:') ||
+                nextLine.startsWith('SPAWN_INFRASTRUCTURE_WORKER:') ||
+                nextLine.startsWith('SEND_EMAIL:') ||
+                nextLine.startsWith('SEND_SMS:') ||
+                nextLine.startsWith('DELIVER_FILE:') ||
+                nextLine.startsWith('KILL_WORKER:') ||
+                nextLine === 'LIST_WORKERS') {
+              break;
+            }
+            // Add this line to body if not empty
+            if (nextLine) {
+              body += '\n' + nextLine;
+            }
+            i++;
+          }
+
+          commands.push({
+            type: 'send-email',
+            payload: { to, subject, body: body.trim() },
+          });
+          continue;
+        }
+      }
+
+      i++;
+    }
+
+    // Second pass: parse all other commands line-by-line
     for (const line of lines) {
-      // Remove markdown formatting (**, *, etc.) and trim
       const trimmed = line.replace(/\*\*/g, '').replace(/\*/g, '').trim();
 
       // SPAWN_WORKER: <task>
@@ -2198,17 +2244,6 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
       if (trimmed.startsWith('SPAWN_INFRASTRUCTURE_WORKER:')) {
         const task = trimmed.slice('SPAWN_INFRASTRUCTURE_WORKER:'.length).trim();
         commands.push({ type: 'spawn-infrastructure-worker', payload: { task } });
-      }
-
-      // SEND_EMAIL: <to> | <subject> | <body>
-      if (trimmed.startsWith('SEND_EMAIL:')) {
-        const parts = trimmed.slice('SEND_EMAIL:'.length).split('|').map((s) => s.trim());
-        if (parts.length >= 3) {
-          commands.push({
-            type: 'send-email',
-            payload: { to: parts[0], subject: parts[1], body: parts.slice(2).join('|') },
-          });
-        }
       }
 
       // SEND_SMS: <to> | <message>
