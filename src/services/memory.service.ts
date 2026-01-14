@@ -185,13 +185,31 @@ export async function importMemoryToSandbox(
     await sandbox.files.write('/tmp/conductor-memory.tar.gz', memoryBuffer.buffer as ArrayBuffer);
 
     // Extract in sandbox (.claude-mem directory)
-    await sandbox.commands.run(
-      'cd /home/user && tar -xzf /tmp/conductor-memory.tar.gz && rm /tmp/conductor-memory.tar.gz'
-    );
+    try {
+      const result = await sandbox.commands.run(
+        'cd /home/user && tar -xzf /tmp/conductor-memory.tar.gz && rm /tmp/conductor-memory.tar.gz'
+      );
+
+      if (result.exitCode !== 0) {
+        console.error(`❌ Tar extraction failed (exit ${result.exitCode})`);
+        console.error(`   Stdout: ${result.stdout}`);
+        console.error(`   Stderr: ${result.stderr}`);
+
+        // Clean up failed tar file
+        await sandbox.commands.run('rm -f /tmp/conductor-memory.tar.gz');
+        return;
+      }
+    } catch (tarError: any) {
+      console.error('❌ Tar extraction error:', tarError.message);
+      // Clean up
+      await sandbox.commands.run('rm -f /tmp/conductor-memory.tar.gz');
+      return;
+    }
 
     console.log(`✅ Memory imported to sandbox ${sandbox.sandboxId}`);
   } catch (error: any) {
     console.error('❌ Failed to import memory:', error.message);
+    console.error('   Full error:', error);
     // Don't throw - memory import is not critical for conductor startup
   }
 }
