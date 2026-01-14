@@ -369,9 +369,6 @@ export async function stopWatch(
 
   await gmail.users.stop({
     userId: 'me',
-    requestBody: {
-      id: channelId,
-    },
   });
 
   // Remove from database

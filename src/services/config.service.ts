@@ -17,7 +17,7 @@ const ALGORITHM = 'aes-256-cbc';
 /**
  * Encrypt sensitive data
  */
-function encrypt(text: string): string {
+export function encrypt(text: string): string {
   const iv = crypto.randomBytes(16);
   const key = Buffer.from(ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32));
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -29,7 +29,7 @@ function encrypt(text: string): string {
 /**
  * Decrypt sensitive data
  */
-function decrypt(text: string): string {
+export function decrypt(text: string): string {
   const parts = text.split(':');
   const iv = Buffer.from(parts[0], 'hex');
   const encryptedText = parts[1];
@@ -41,7 +41,7 @@ function decrypt(text: string): string {
 }
 
 export interface ConnectorConfig {
-  type: 'email' | 'sms';
+  type: 'email' | 'sms' | 'google_workspace';
   enabled: boolean;
   settings: Record<string, any>;
   updatedAt: Date;
@@ -52,7 +52,7 @@ export interface ConnectorConfig {
  */
 export async function saveConnectorConfig(
   userId: string,
-  type: 'email' | 'sms',
+  type: 'email' | 'sms' | 'google_workspace',
   settings: Record<string, any>
 ): Promise<void> {
   // Encrypt sensitive fields
@@ -102,7 +102,7 @@ export async function saveConnectorConfig(
  */
 export async function getConnectorConfig(
   userId: string,
-  type: 'email' | 'sms'
+  type: 'email' | 'sms' | 'google_workspace'
 ): Promise<ConnectorConfig | null> {
   const result = await db
     .select()
@@ -155,7 +155,7 @@ export async function getAllConnectorConfigs(
 /**
  * Delete connector configuration
  */
-export async function deleteConnectorConfig(userId: string, type: 'email' | 'sms'): Promise<void> {
+export async function deleteConnectorConfig(userId: string, type: 'email' | 'sms' | 'google_workspace'): Promise<void> {
   await db
     .delete(connectorConfigs)
     .where(and(eq(connectorConfigs.user_id, userId), eq(connectorConfigs.connector_type, type)));
@@ -183,7 +183,7 @@ export function isConnectorConfigured(type: 'email' | 'sms'): boolean {
  */
 export async function getEffectiveConnectorConfig(
   userId: string | undefined,
-  type: 'email' | 'sms'
+  type: 'email' | 'sms' | 'google_workspace'
 ): Promise<any | null> {
   // Try to get from database first (if userId provided)
   if (userId) {

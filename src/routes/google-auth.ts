@@ -50,7 +50,7 @@ const googleAuthRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Check for authorization errors
       if (error) {
-        fastify.log.error('OAuth error:', error);
+        fastify.log.error({ error }, 'OAuth error');
         return reply.code(400).send({
           success: false,
           error: `Authorization failed: ${error}`,
@@ -74,7 +74,7 @@ const googleAuthRoutes: FastifyPluginAsync = async (fastify) => {
         await gmailService.watchMailbox(userId);
         fastify.log.info('✅ Gmail watch set up successfully');
       } catch (watchError: any) {
-        fastify.log.error('⚠️  Failed to set up Gmail watch:', watchError.message);
+        fastify.log.error({ err: watchError }, '⚠️  Failed to set up Gmail watch');
         // Don't fail the whole auth flow if watch setup fails
       }
 

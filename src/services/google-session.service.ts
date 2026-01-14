@@ -71,7 +71,7 @@ export async function createWebSession(
     const cookies = await context.cookies();
 
     // Filter for Google domains
-    const googleCookies = cookies.filter((cookie) =>
+    const googleCookies = cookies.filter((cookie: { domain: string }) =>
       cookie.domain.includes('google.com') ||
       cookie.domain.includes('gmail.com') ||
       cookie.domain.includes('docs.google.com')
