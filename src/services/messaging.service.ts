@@ -34,7 +34,7 @@ if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
 }
 
 /**
- * Send an email via SendGrid
+ * Send an email via Gmail (Stu's account: stutheagent@gmail.com)
  */
 export async function sendEmail(
   to: string,
@@ -43,39 +43,19 @@ export async function sendEmail(
   attachments?: Array<{ filename: string; content: string; type?: string }>,
   userId?: string
 ): Promise<void> {
-  // Get config from database or env vars
-  const config = await getEffectiveConnectorConfig(userId, 'email');
-
-  if (!config || !config.apiKey) {
-    throw new Error('SendGrid not configured. Please configure email connector in Studio settings.');
-  }
+  // Use Google Gmail API to send from Stu's account
+  const { sendEmail: gmailSendEmail } = await import('./google-gmail.service.js');
 
   try {
-    // Initialize SendGrid with config
-    sgMail.setApiKey(config.apiKey);
-
-    const msg: any = {
+    await gmailSendEmail(userId || 'default-user', {
       to,
-      from: config.fromEmail || 'agent@noahbyrnes.com',
       subject,
-      text: body,
-      html: body.replace(/\n/g, '<br>'),
-    };
-
-    if (attachments && attachments.length > 0) {
-      msg.attachments = attachments.map((att) => ({
-        filename: att.filename,
-        content: att.content,
-        type: att.type || 'application/octet-stream',
-        disposition: 'attachment',
-      }));
-    }
-
-    await sgMail.send(msg);
-    console.log(`✅ Email sent to ${to}: ${subject}`);
+      body,
+    });
+    console.log(`✅ Email sent from stutheagent@gmail.com to ${to}: ${subject}`);
   } catch (error: any) {
-    console.error('❌ SendGrid error:', error.response?.body || error.message);
-    throw new Error(`Failed to send email: ${error.message}`);
+    console.error('❌ Gmail error:', error.message);
+    throw new Error(`Failed to send email via Gmail: ${error.message}`);
   }
 }
 
