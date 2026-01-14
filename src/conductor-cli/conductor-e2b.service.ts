@@ -2035,27 +2035,41 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
       // Parse conductor's response for commands
       const commands = this.parseCommands(conductorResponse.result);
 
-      // Check if conductor wants to end conversation with this worker
-      const hasKillWorker = commands.some(cmd => cmd.type === 'kill-worker');
+      // Analyze what commands conductor issued
+      const hasKillWorker = commands.some(cmd => cmd.type === 'kill-worker' && cmd.payload?.workerId === workerId);
       const hasEmailOrSms = commands.some(cmd => cmd.type === 'send-email' || cmd.type === 'send-sms');
+      const hasSpawnWorker = commands.some(cmd => cmd.type === 'spawn-worker' || cmd.type === 'spawn-infrastructure-worker');
+      const hasOtherCommands = commands.some(cmd =>
+        cmd.type !== 'send-email' &&
+        cmd.type !== 'send-sms' &&
+        cmd.type !== 'kill-worker'
+      );
 
-      if (hasKillWorker || hasEmailOrSms) {
-        console.log(`   ✅ Conductor finished with worker ${workerId.substring(0, 8)}`);
+      // Case 1: Conductor explicitly killed this worker
+      if (hasKillWorker) {
+        console.log(`   ✅ Conductor explicitly killed worker ${workerId.substring(0, 8)}`);
         conversationActive = false;
-        // Execute any final commands (like SEND_EMAIL, KILL_WORKER)
         await this.executeCommands(commands);
-
-        // Safety: If conductor sent final reply but didn't kill this specific worker, kill it now
-        if (hasEmailOrSms && !commands.some(cmd => cmd.type === 'kill-worker' && cmd.payload?.workerId === workerId)) {
-          console.log(`   🧹 Auto-cleanup: Killing worker ${workerId.substring(0, 8)} (conductor sent final reply)`);
-          await this.killWorker(workerId);
-        }
         break;
       }
 
-      // Check if conductor is addressing the worker (continuing conversation)
-      // If the response doesn't contain commands, it's a message for the worker
-      if (commands.length === 0 || !commands.some(cmd => cmd.type === 'spawn-worker')) {
+      // Case 2: Conductor spawned new worker or issued other commands (not talking to this worker anymore)
+      if (hasSpawnWorker || hasOtherCommands) {
+        console.log(`   ✅ Conductor issued new commands, ending conversation with worker`);
+        conversationActive = false;
+        await this.executeCommands(commands);
+        break;
+      }
+
+      // Case 3: Conductor sent email/SMS (execute them, then check if also messaging worker)
+      if (hasEmailOrSms) {
+        console.log(`   📧 Conductor sent email/SMS to user`);
+        await this.executeCommands(commands.filter(cmd => cmd.type === 'send-email' || cmd.type === 'send-sms'));
+        // Fall through to check if conductor also has message for worker
+      }
+
+      // Case 4: Conductor is addressing the worker directly (no commands, or just sent email/SMS above)
+      if (commands.length === 0 || (hasEmailOrSms && !hasSpawnWorker && !hasOtherCommands)) {
         // Send conductor's message to worker
         console.log(`   📤 Conductor → Worker: ${conductorResponse.result.substring(0, 100)}...`);
 

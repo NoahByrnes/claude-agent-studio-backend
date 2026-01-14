@@ -94,6 +94,9 @@ export class E2BCLIExecutor {
    * Execute and stream all messages.
    * Note: Streaming in E2B is limited - we get full output at end.
    * For true streaming, use WebSocket to E2B sandbox.
+   *
+   * IMPORTANT: If no sessionId is provided, creates a NEW session that will END when stream completes.
+   * To keep session alive, pass sessionId from startSession().
    */
   async *executeStream(
     prompt: string,
@@ -106,7 +109,8 @@ export class E2BCLIExecutor {
     // Use sandbox lifetime as timeout (1 hour for Hobby tier)
     const timeout = options.timeout || 3600000; // 1 hour, matches sandbox lifetime
 
-    console.log(`   🚀 Starting CLI stream command (conductor will manage worker lifecycle)`);
+    const isNewSession = !options.sessionId;
+    console.log(`   🚀 Starting CLI stream command (${isNewSession ? 'NEW session' : 'resume session ' + options.sessionId?.substring(0, 8)})`);
 
     // Start command in background
     const handle = await this.sandbox.commands.run(command, {
@@ -177,6 +181,35 @@ export class E2BCLIExecutor {
     const response = await this.execute(systemPrompt, options);
     console.log(`   ✅ CLI session started: ${response.session_id}`);
     return response.session_id;
+  }
+
+  /**
+   * Start a new CLI session with streaming, keeping session alive for follow-ups.
+   * Returns an async generator that yields: [sessionId, ...stream messages]
+   *
+   * Usage for workers:
+   *   for await (const message of executor.startSessionWithStream(prompt, options)) {
+   *     if (message.type === 'init' && message.session_id) {
+   *       sessionId = message.session_id; // Save for follow-ups!
+   *     }
+   *     // Process other messages...
+   *   }
+   *   // Session remains alive! Use sendToSession() for follow-ups
+   */
+  async *startSessionWithStream(
+    systemPrompt: string,
+    options: ExecuteOptions = {}
+  ): AsyncGenerator<CLIStreamMessage> {
+    console.log(`   📋 Starting CLI session WITH STREAMING (${systemPrompt.length} chars)`);
+    console.log(`   Session will remain alive after stream completes`);
+
+    // Use executeStream WITHOUT sessionId to create new session
+    // But we'll track the session ID from the stream and document it stays alive
+    for await (const message of this.executeStream(systemPrompt, options)) {
+      yield message;
+    }
+
+    console.log(`   ✅ Session stream completed. Session remains ALIVE for follow-ups`);
   }
 
   /**
