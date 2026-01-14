@@ -301,10 +301,22 @@ export async function revokeAccess(userId: string = 'default-user'): Promise<voi
  * Create authenticated OAuth2 client for API calls
  */
 export async function getAuthenticatedClient(userId: string = 'default-user'): Promise<OAuth2Client> {
-  const accessToken = await getAccessToken(userId);
+  // Get full credentials from database (includes refresh token)
+  const credentials = await getCredentials(userId);
+
+  if (!credentials) {
+    throw new Error('Google account not connected. Please authenticate first.');
+  }
 
   const oauth2Client = createOAuth2Client();
-  oauth2Client.setCredentials({ access_token: accessToken });
+
+  // Set full credentials including refresh token for auto-refresh
+  oauth2Client.setCredentials({
+    access_token: credentials.access_token,
+    refresh_token: credentials.refresh_token,
+    expiry_date: new Date(credentials.token_expiry).getTime(),
+    scope: credentials.scopes.join(' '),
+  });
 
   return oauth2Client;
 }
