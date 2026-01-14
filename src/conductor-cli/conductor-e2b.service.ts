@@ -2198,7 +2198,7 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
     const commands: DetectedCommand[] = [];
     const lines = output.split('\n');
 
-    // First pass: find SEND_EMAIL commands and capture multi-line bodies
+    // First pass: find SEND_EMAIL and DELIVER_FILE commands and capture multi-line bodies/messages
     let i = 0;
     while (i < lines.length) {
       const line = lines[i];
@@ -2241,6 +2241,54 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
         }
       }
 
+      // DELIVER_FILE: <to> | <file-paths> | <subject> | <message> (can be multi-line)
+      if (trimmed.startsWith('DELIVER_FILE:')) {
+        const firstLineParts = trimmed.slice('DELIVER_FILE:'.length).split('|');
+        if (firstLineParts.length >= 3) {
+          const to = firstLineParts[0].trim();
+          const filesStr = firstLineParts[1].trim();
+          const subject = firstLineParts[2]?.trim() || undefined;
+          let message = firstLineParts.slice(3).join('|').trim();
+
+          // Capture additional lines for multi-line message until next command
+          i++;
+          while (i < lines.length) {
+            const nextLine = lines[i].replace(/\*\*/g, '').replace(/\*/g, '').trim();
+            // Stop if we hit another command
+            if (nextLine.startsWith('SPAWN_WORKER:') ||
+                nextLine.startsWith('SPAWN_INFRASTRUCTURE_WORKER:') ||
+                nextLine.startsWith('SEND_EMAIL:') ||
+                nextLine.startsWith('SEND_SMS:') ||
+                nextLine.startsWith('DELIVER_FILE:') ||
+                nextLine.startsWith('KILL_WORKER:') ||
+                nextLine === 'LIST_WORKERS') {
+              break;
+            }
+            // Add this line to message if not empty
+            if (nextLine) {
+              message += '\n' + nextLine;
+            }
+            i++;
+          }
+
+          // Parse file paths
+          const files = filesStr.split(',').map(f => f.trim()).filter(f => f.length > 0).map(path => ({ path }));
+
+          if (files.length > 0) {
+            commands.push({
+              type: 'deliver-file',
+              payload: {
+                recipient: to,
+                files,
+                subject: subject || undefined,
+                message: message.trim() || undefined,
+              },
+            });
+          }
+          continue;
+        }
+      }
+
       i++;
     }
 
@@ -2271,13 +2319,7 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
         }
       }
 
-      // DELIVER_FILE: <to> | <file-paths> | <subject> | <message>
-      if (trimmed.startsWith('DELIVER_FILE:')) {
-        const deliveryRequest = parseDeliverFileCommand(trimmed);
-        if (deliveryRequest) {
-          commands.push({ type: 'deliver-file', payload: deliveryRequest });
-        }
-      }
+      // DELIVER_FILE is handled in first pass (supports multi-line messages)
 
       // LIST_WORKERS
       if (trimmed === 'LIST_WORKERS' || trimmed.startsWith('LIST_WORKERS')) {
