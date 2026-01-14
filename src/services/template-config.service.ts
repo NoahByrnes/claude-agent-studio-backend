@@ -1,13 +1,17 @@
 /**
  * Template Configuration Service
  *
- * Manages E2B template IDs dynamically in Redis.
+ * Manages E2B template IDs with PostgreSQL as primary storage and Redis as cache.
  * Allows workers to update template IDs autonomously after rebuilds.
  */
 
 import { redis as redisClient } from '../lib/redis.js';
+import { db } from '../lib/db.js';
+import { templateConfigurations, type TemplateConfiguration, type NewTemplateConfiguration } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
 
 const REDIS_TEMPLATE_KEY = 'e2b:templates';
+const REDIS_CACHE_TTL = 86400; // 24 hours
 
 export interface TemplateConfig {
   conductor: string;
@@ -19,22 +23,60 @@ export interface TemplateConfig {
 
 /**
  * Get current template configuration
- * Priority: Redis > Environment Variables (fallback)
+ * Checks Redis cache first, then PostgreSQL, falls back to environment variables
  */
 export async function getTemplateConfig(): Promise<TemplateConfig> {
-  // Try Redis
+  const configKey = 'default';
+
+  // Try Redis cache first (fast path)
   if (redisClient) {
     try {
       const cached = await redisClient.get(REDIS_TEMPLATE_KEY);
       if (cached) {
-        return JSON.parse(cached);
+        const config = JSON.parse(cached) as TemplateConfig;
+        console.log('📥 Loaded template config from Redis cache');
+        return config;
       }
     } catch (error: any) {
-      console.warn('⚠️  Redis template config read failed:', error.message);
+      console.warn('⚠️  Redis cache read failed:', error.message);
     }
   }
 
-  // Fallback to environment variables (and cache in Redis for next time)
+  // Try PostgreSQL (primary storage)
+  try {
+    const result = await db.select()
+      .from(templateConfigurations)
+      .where(eq(templateConfigurations.config_key, configKey))
+      .limit(1);
+
+    if (result.length > 0) {
+      const dbConfig = result[0];
+      const config: TemplateConfig = {
+        conductor: dbConfig.conductor_template,
+        worker: dbConfig.worker_template,
+        infrastructure: dbConfig.infrastructure_template,
+        lastUpdated: dbConfig.updated_at.toISOString(),
+        updatedBy: dbConfig.updated_by,
+      };
+
+      console.log('📥 Loaded template config from PostgreSQL');
+
+      // Cache in Redis for future fast access
+      if (redisClient) {
+        try {
+          await redisClient.setex(REDIS_TEMPLATE_KEY, REDIS_CACHE_TTL, JSON.stringify(config));
+        } catch (error: any) {
+          console.warn('⚠️  Failed to cache in Redis (non-critical):', error.message);
+        }
+      }
+
+      return config;
+    }
+  } catch (error: any) {
+    console.error('❌ PostgreSQL read failed:', error.message);
+  }
+
+  // Fallback to environment variables and initialize in database
   console.log('ℹ️  Using environment variable fallback for template config');
   const config: TemplateConfig = {
     conductor: process.env.E2B_CONDUCTOR_TEMPLATE_ID || '',
@@ -44,12 +86,26 @@ export async function getTemplateConfig(): Promise<TemplateConfig> {
     updatedBy: 'manual',
   };
 
+  // Try to save to database for next time
+  try {
+    await db.insert(templateConfigurations).values({
+      config_key: configKey,
+      conductor_template: config.conductor,
+      worker_template: config.worker,
+      infrastructure_template: config.infrastructure,
+      updated_by: config.updatedBy,
+    });
+    console.log('✅ Initialized template config in PostgreSQL from environment variables');
+  } catch (error: any) {
+    console.warn('⚠️  Failed to initialize in PostgreSQL:', error.message);
+  }
+
   // Cache in Redis
   if (redisClient) {
     try {
-      await redisClient.setex(REDIS_TEMPLATE_KEY, 86400, JSON.stringify(config)); // 24 hour TTL
+      await redisClient.setex(REDIS_TEMPLATE_KEY, REDIS_CACHE_TTL, JSON.stringify(config));
     } catch (error: any) {
-      console.warn('⚠️  Failed to cache config in Redis:', error.message);
+      console.warn('⚠️  Failed to cache in Redis (non-critical):', error.message);
     }
   }
 
@@ -58,12 +114,14 @@ export async function getTemplateConfig(): Promise<TemplateConfig> {
 
 /**
  * Update template configuration
- * Stores in Redis (persistent with 24h TTL)
+ * Stores in PostgreSQL (primary) and Redis (cache)
  */
 export async function updateTemplateConfig(
   updates: Partial<Omit<TemplateConfig, 'lastUpdated'>>,
   updatedBy: string = 'manual'
 ): Promise<TemplateConfig> {
+  const configKey = 'default';
+
   // Get current config
   const current = await getTemplateConfig();
 
@@ -84,22 +142,54 @@ export async function updateTemplateConfig(
     }
   }
 
-  // Update Redis (24 hour TTL)
-  if (!redisClient) {
-    throw new Error('Redis not available - cannot update template config');
-  }
-
+  // Update PostgreSQL (primary storage)
   try {
-    await redisClient.setex(REDIS_TEMPLATE_KEY, 86400, JSON.stringify(newConfig)); // 24 hour TTL
-    console.log('✅ Template config saved to Redis:', {
+    const existing = await db.select()
+      .from(templateConfigurations)
+      .where(eq(templateConfigurations.config_key, configKey))
+      .limit(1);
+
+    if (existing.length > 0) {
+      // Update existing
+      await db.update(templateConfigurations)
+        .set({
+          conductor_template: newConfig.conductor,
+          worker_template: newConfig.worker,
+          infrastructure_template: newConfig.infrastructure,
+          updated_by: newConfig.updatedBy,
+          updated_at: new Date(),
+        })
+        .where(eq(templateConfigurations.config_key, configKey));
+    } else {
+      // Insert new
+      await db.insert(templateConfigurations).values({
+        config_key: configKey,
+        conductor_template: newConfig.conductor,
+        worker_template: newConfig.worker,
+        infrastructure_template: newConfig.infrastructure,
+        updated_by: newConfig.updatedBy,
+      });
+    }
+
+    console.log('✅ Template config saved to PostgreSQL:', {
       conductor: newConfig.conductor,
       worker: newConfig.worker,
       infrastructure: newConfig.infrastructure,
       updatedBy: newConfig.updatedBy,
     });
   } catch (error: any) {
-    console.error('❌ Failed to save template config to Redis:', error.message);
+    console.error('❌ Failed to save template config to PostgreSQL:', error.message);
     throw error;
+  }
+
+  // Update Redis cache
+  if (redisClient) {
+    try {
+      await redisClient.setex(REDIS_TEMPLATE_KEY, REDIS_CACHE_TTL, JSON.stringify(newConfig));
+      console.log('   Cached in Redis (24h TTL)');
+    } catch (error: any) {
+      console.warn('⚠️  Failed to cache in Redis (non-critical):', error.message);
+    }
   }
 
   return newConfig;
@@ -132,34 +222,15 @@ export async function getTemplateId(
 }
 
 /**
- * Initialize template config in Redis from environment variables
+ * Initialize template config in database from environment variables
+ * (Called on startup if not exists)
  */
 export async function initializeTemplateConfig(): Promise<void> {
-  if (!redisClient) {
-    console.log('ℹ️  Redis not available, template config will use environment variables only');
-    return;
-  }
-
   try {
-    // Check if config already exists in Redis
-    const existing = await redisClient.get(REDIS_TEMPLATE_KEY);
-    if (existing) {
-      console.log('✅ Template config already exists in Redis');
-      return;
-    }
-
-    // Initialize from environment variables
-    const initialConfig: TemplateConfig = {
-      conductor: process.env.E2B_CONDUCTOR_TEMPLATE_ID || '',
-      worker: process.env.E2B_TEMPLATE_ID || '',
-      infrastructure: process.env.E2B_INFRASTRUCTURE_TEMPLATE_ID || '',
-      lastUpdated: new Date().toISOString(),
-      updatedBy: 'manual',
-    };
-
-    await redisClient.setex(REDIS_TEMPLATE_KEY, 86400, JSON.stringify(initialConfig)); // 24 hour TTL
-    console.log('✅ Template config initialized in Redis from environment variables');
+    // Try to get existing config (will initialize if not exists)
+    await getTemplateConfig();
+    console.log('✅ Template configuration initialized');
   } catch (error: any) {
-    console.warn('⚠️  Failed to initialize template config in Redis:', error.message);
+    console.warn('⚠️  Failed to initialize template config:', error.message);
   }
 }

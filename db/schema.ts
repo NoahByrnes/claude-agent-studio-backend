@@ -119,6 +119,39 @@ export const googleEmailThreads = pgTable('google_email_threads', {
   created_at: timestamp('created_at').notNull().defaultNow(),
 });
 
+// Conductor Memory Table (persistent storage for conductor memory backups)
+export const conductorMemory = pgTable('conductor_memory', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  conductor_id: varchar('conductor_id', { length: 255 }).notNull().unique(), // 'default' or specific ID
+  memory_data: text('memory_data').notNull(), // Base64-encoded tarball of .claude-mem directory
+  size_bytes: varchar('size_bytes', { length: 50 }).notNull(), // Store as string to handle large numbers
+  created_at: timestamp('created_at').notNull().defaultNow(),
+  updated_at: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// Conductor Sessions Table (persistent storage for active conductor state)
+export const conductorSessions = pgTable('conductor_sessions', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  conductor_id: varchar('conductor_id', { length: 255 }).notNull().unique(), // 'default' or specific ID
+  sandbox_id: varchar('sandbox_id', { length: 255 }).notNull(),
+  session_id: varchar('session_id', { length: 255 }).notNull(),
+  created_at: timestamp('created_at').notNull().defaultNow(),
+  last_activity_at: timestamp('last_activity_at').notNull().defaultNow(),
+  expires_at: timestamp('expires_at').notNull(), // E2B sandboxes expire after 1 hour
+});
+
+// Template Configurations Table (persistent storage for E2B template IDs)
+export const templateConfigurations = pgTable('template_configurations', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  config_key: varchar('config_key', { length: 50 }).notNull().unique().default('default'), // Usually 'default'
+  conductor_template: varchar('conductor_template', { length: 255 }).notNull(),
+  worker_template: varchar('worker_template', { length: 255 }).notNull(),
+  infrastructure_template: varchar('infrastructure_template', { length: 255 }).notNull(),
+  updated_by: varchar('updated_by', { length: 100 }).notNull(), // 'manual', 'worker', 'infrastructure-worker'
+  created_at: timestamp('created_at').notNull().defaultNow(),
+  updated_at: timestamp('updated_at').notNull().defaultNow(),
+});
+
 // Type exports
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
@@ -149,3 +182,12 @@ export type NewGoogleEvent = typeof googleEvents.$inferInsert;
 
 export type GoogleEmailThread = typeof googleEmailThreads.$inferSelect;
 export type NewGoogleEmailThread = typeof googleEmailThreads.$inferInsert;
+
+export type ConductorMemory = typeof conductorMemory.$inferSelect;
+export type NewConductorMemory = typeof conductorMemory.$inferInsert;
+
+export type ConductorSession = typeof conductorSessions.$inferSelect;
+export type NewConductorSession = typeof conductorSessions.$inferInsert;
+
+export type TemplateConfiguration = typeof templateConfigurations.$inferSelect;
+export type NewTemplateConfiguration = typeof templateConfigurations.$inferInsert;
