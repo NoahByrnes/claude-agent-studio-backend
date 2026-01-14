@@ -233,9 +233,11 @@ export async function sendEmail(
     bccAddresses ? `Bcc: ${bccAddresses}` : '',
     `Subject: ${options.subject}`,
     'Content-Type: text/plain; charset=utf-8',
-    '',
-    options.body,
   ].filter(Boolean);
+
+  // Add blank line separator between headers and body
+  emailLines.push('');
+  emailLines.push(options.body);
 
   const email = emailLines.join('\r\n');
   const encodedEmail = Buffer.from(email).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -283,9 +285,11 @@ export async function replyToThread(
     `In-Reply-To: <${originalMessage.id}>`,
     `References: <${originalMessage.id}>`,
     'Content-Type: text/plain; charset=utf-8',
-    '',
-    body,
   ].filter(Boolean);
+
+  // Add blank line separator between headers and body
+  emailLines.push('');
+  emailLines.push(body);
 
   const email = emailLines.join('\r\n');
   const encodedEmail = Buffer.from(email).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
