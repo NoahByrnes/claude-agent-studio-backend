@@ -2039,11 +2039,6 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
       const hasKillWorker = commands.some(cmd => cmd.type === 'kill-worker' && cmd.payload?.workerId === workerId);
       const hasEmailOrSms = commands.some(cmd => cmd.type === 'send-email' || cmd.type === 'send-sms');
       const hasSpawnWorker = commands.some(cmd => cmd.type === 'spawn-worker' || cmd.type === 'spawn-infrastructure-worker');
-      const hasOtherCommands = commands.some(cmd =>
-        cmd.type !== 'send-email' &&
-        cmd.type !== 'send-sms' &&
-        cmd.type !== 'kill-worker'
-      );
 
       // Case 1: Conductor explicitly killed this worker
       if (hasKillWorker) {
@@ -2053,54 +2048,46 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
         break;
       }
 
-      // Case 2: Conductor spawned new worker or issued other commands (not talking to this worker anymore)
-      if (hasSpawnWorker || hasOtherCommands) {
-        console.log(`   ✅ Conductor issued new commands, ending conversation with worker`);
-        conversationActive = false;
-        await this.executeCommands(commands);
-        break;
-      }
+      // Case 2: Execute any commands (email, SMS, spawn new workers, etc.)
+      // Stu can spawn additional workers, send emails, etc. while STILL working with this worker
+      if (commands.length > 0) {
+        const commandTypes = commands.map(c => c.type).join(', ');
+        console.log(`   ⚙️  Executing commands: ${commandTypes}`);
 
-      // Case 3: Conductor sent email/SMS (execute them, then check if also messaging worker)
-      if (hasEmailOrSms) {
-        console.log(`   📧 Conductor sent email/SMS to user`);
-        await this.executeCommands(commands.filter(cmd => cmd.type === 'send-email' || cmd.type === 'send-sms'));
-        // Fall through to check if conductor also has message for worker
-      }
-
-      // Case 4: Conductor is addressing the worker directly (no commands, or just sent email/SMS above)
-      if (commands.length === 0 || (hasEmailOrSms && !hasSpawnWorker && !hasOtherCommands)) {
-        // Send conductor's message to worker
-        console.log(`   📤 Conductor → Worker: ${conductorResponse.result.substring(0, 100)}...`);
-
-        // Capture conductor's message to worker in CLI feed
-        addCLIOutput({
-          timestamp: new Date(),
-          source: 'worker',
-          sourceId: workerId,
-          content: `[CONDUCTOR → WORKER]: ${conductorResponse.result}`,
-          type: 'input',
-        });
-
-        const sandboxInfo = this.workerSandboxes.get(workerId);
-        if (sandboxInfo) {
-          currentWorkerResponse = await sandboxInfo.executor.sendToSession(
-            workerId,
-            conductorResponse.result,
-            {
-              skipPermissions: true, // Workers run autonomously
-              // No explicit timeout - conductor manages worker lifecycle
-            }
-          );
-        } else {
-          console.log(`   ⚠️  Worker ${workerId} not found, ending conversation`);
-          conversationActive = false;
+        // Execute all non-kill commands (spawn workers, send emails, etc.)
+        const nonKillCommands = commands.filter(cmd => cmd.type !== 'kill-worker');
+        if (nonKillCommands.length > 0) {
+          await this.executeCommands(nonKillCommands);
         }
+      }
+
+      // Case 3: Send conductor's full response to worker (may include commands + instructions)
+      // The worker can see what actions Stu is taking (spawning other workers, sending emails, etc.)
+      // and still receive instructions in the same message
+      console.log(`   📤 Conductor → Worker: ${conductorResponse.result.substring(0, 100)}...`);
+
+      // Capture conductor's message to worker in CLI feed
+      addCLIOutput({
+        timestamp: new Date(),
+        source: 'worker',
+        sourceId: workerId,
+        content: `[CONDUCTOR → WORKER]: ${conductorResponse.result}`,
+        type: 'input',
+      });
+
+      const sandboxInfo = this.workerSandboxes.get(workerId);
+      if (sandboxInfo) {
+        currentWorkerResponse = await sandboxInfo.executor.sendToSession(
+          workerId,
+          conductorResponse.result,
+          {
+            skipPermissions: true, // Workers run autonomously
+            // No explicit timeout - conductor manages worker lifecycle
+          }
+        );
       } else {
-        // Conductor issued new commands, conversation with this worker is done
-        console.log(`   ✅ Conductor issued new commands, ending conversation with worker`);
+        console.log(`   ⚠️  Worker ${workerId} not found, ending conversation`);
         conversationActive = false;
-        await this.executeCommands(commands);
       }
     }
 
