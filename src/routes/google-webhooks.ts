@@ -33,10 +33,10 @@ const googleWebhookRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       const notification = request.body;
 
-      fastify.log.info('Gmail push notification received', {
+      fastify.log.info({
         messageId: notification.message.messageId,
         publishTime: notification.message.publishTime,
-      });
+      }, 'Gmail push notification received');
 
       // Decode base64 payload
       const decodedData = Buffer.from(notification.message.data, 'base64').toString('utf-8');
