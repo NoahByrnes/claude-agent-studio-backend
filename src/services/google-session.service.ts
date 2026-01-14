@@ -1,97 +1,50 @@
 /**
  * Google Session Service
  *
- * Manages Google web session cookies for Playwright-based workers.
- * Allows workers to authenticate to Google's web UI using stored sessions.
+ * Provides OAuth access tokens for Playwright-based workers.
+ * Workers use these tokens in their own Playwright instances to authenticate.
  */
 
 import { redis as redisClient } from '../lib/redis.js';
-import { getAuthenticatedClient } from './google-auth.service.js';
-import { chromium } from 'playwright';
+import { getAccessToken } from './google-auth.service.js';
 
 interface GoogleWebSession {
-  cookies: Array<{
-    name: string;
-    value: string;
-    domain: string;
-    path: string;
-    expires: number;
-    httpOnly: boolean;
-    secure: boolean;
-    sameSite: 'Strict' | 'Lax' | 'None';
-  }>;
-  createdAt: string;
+  accessToken: string;
+  tokenType: string;
   expiresAt: string;
+  createdAt: string;
 }
 
 const REDIS_SESSION_KEY = 'google:web_session';
-const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days
+const SESSION_TTL = 50 * 60; // 50 minutes (tokens expire in ~1 hour)
 
 /**
- * Create a web session by logging in via Playwright
- * This generates cookies that workers can reuse
+ * Create a web session (simplified - just returns OAuth token)
+ * Workers will use this token in their own Playwright instances
  */
 export async function createWebSession(
   userId: string = 'default-user'
 ): Promise<GoogleWebSession> {
-  // Get OAuth client to extract access token
-  const oauth2Client = await getAuthenticatedClient(userId);
-  const credentials = await oauth2Client.getAccessToken();
+  // Get valid OAuth access token (auto-refreshed if needed)
+  const accessToken = await getAccessToken(userId);
 
-  if (!credentials.token) {
+  if (!accessToken) {
     throw new Error('No access token available');
   }
 
-  // Launch headless browser
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  const session: GoogleWebSession = {
+    accessToken,
+    tokenType: 'Bearer',
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + SESSION_TTL * 1000).toISOString(),
+  };
 
-  try {
-    // Method 1: Set OAuth token as cookie and navigate
-    // Google will recognize the OAuth session
-    await context.addCookies([
-      {
-        name: 'oauth_token',
-        value: credentials.token,
-        domain: '.google.com',
-        path: '/',
-        httpOnly: true,
-        secure: true,
-        sameSite: 'None',
-        expires: Math.floor(Date.now() / 1000) + 3600,
-      },
-    ]);
+  // Store in Redis
+  await storeSession(userId, session);
 
-    // Navigate to Google to establish session
-    await page.goto('https://accounts.google.com/signin/oauth');
-    await page.waitForTimeout(3000);
+  console.log(`✅ Google web session created for user: ${userId}`);
 
-    // Extract all Google cookies
-    const cookies = await context.cookies();
-
-    // Filter for Google domains
-    const googleCookies = cookies.filter((cookie: { domain: string }) =>
-      cookie.domain.includes('google.com') ||
-      cookie.domain.includes('gmail.com') ||
-      cookie.domain.includes('docs.google.com')
-    );
-
-    const session: GoogleWebSession = {
-      cookies: googleCookies as any,
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + SESSION_TTL * 1000).toISOString(),
-    };
-
-    // Store in Redis
-    await storeSession(userId, session);
-
-    console.log(`✅ Google web session created for user: ${userId}`);
-
-    return session;
-  } finally {
-    await browser.close();
-  }
+  return session;
 }
 
 /**
@@ -188,17 +141,14 @@ export async function clearWebSession(
 }
 
 /**
- * Export session cookies in Playwright-compatible format
+ * Export session data for workers
+ * Workers will use the access token to authenticate their Playwright sessions
  */
-export function exportCookiesForPlaywright(session: GoogleWebSession): Array<{
-  name: string;
-  value: string;
-  domain: string;
-  path: string;
-  expires: number;
-  httpOnly: boolean;
-  secure: boolean;
-  sameSite: 'Strict' | 'Lax' | 'None';
-}> {
-  return session.cookies;
+export function exportSessionForWorker(session: GoogleWebSession) {
+  return {
+    accessToken: session.accessToken,
+    tokenType: session.tokenType,
+    expiresAt: session.expiresAt,
+    usage: 'Use this access token in your Playwright authentication flow',
+  };
 }

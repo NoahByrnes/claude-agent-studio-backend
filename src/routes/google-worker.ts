@@ -55,14 +55,12 @@ const googleWorkerRoutes: FastifyPluginAsync = async (fastify) => {
       // Get or create web session
       const session = await sessionService.ensureWebSession(userId);
 
-      // Export cookies in Playwright format
-      const cookies = sessionService.exportCookiesForPlaywright(session);
+      // Export session data for worker
+      const sessionData = sessionService.exportSessionForWorker(session);
 
       return reply.send({
         success: true,
-        cookies,
-        expiresAt: session.expiresAt,
-        usage: 'Use await context.addCookies(cookies) in Playwright',
+        ...sessionData,
       });
     } catch (error: any) {
       fastify.log.error('Failed to get web session:', error);
