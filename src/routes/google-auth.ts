@@ -67,9 +67,16 @@ const googleAuthRoutes: FastifyPluginAsync = async (fastify) => {
       const userId = state || 'default-user'; // State contains userId
 
       // Exchange code for tokens
-      const credentials = await googleAuthService.handleCallback(code, userId);
+      let credentials;
+      try {
+        credentials = await googleAuthService.handleCallback(code, userId);
+        fastify.log.info({ email: credentials.account_email }, 'OAuth tokens received and stored');
+      } catch (callbackError: any) {
+        fastify.log.error({ err: callbackError }, 'Failed during OAuth token exchange');
+        throw callbackError;
+      }
 
-      // Set up Gmail watch for push notifications
+      // Set up Gmail watch for push notifications (non-blocking)
       try {
         await gmailService.watchMailbox(userId);
         fastify.log.info('✅ Gmail watch set up successfully');
