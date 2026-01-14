@@ -9,6 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import { ConductorE2BService } from '../conductor-cli/conductor-e2b.service.js';
 import type { IncomingMessage } from '../conductor-cli/types.js';
 import { sendEmail, sendSMS } from '../services/messaging.service.js';
+import * as verificationCodeService from '../services/verification-code.service.js';
 
 // Global conductor instance (initialized on first webhook)
 let conductorService: ConductorE2BService | null = null;
@@ -149,6 +150,25 @@ ${email.body}`,
 
       console.log(`📱 Incoming SMS from ${sms.from}`);
 
+      // Check if this is a verification code
+      const verificationResult = await verificationCodeService.processIncomingMessage(
+        sms.body,
+        'SMS',
+        sms.from
+      );
+
+      if (verificationResult.isVerificationCode) {
+        console.log(`🔐 Verification code detected, stored for Stu's use`);
+
+        // Don't route to Stu - just acknowledge receipt
+        return reply.send({
+          success: true,
+          message: 'Verification code received and stored',
+          code: verificationResult.code,
+        });
+      }
+
+      // Normal message - route to Stu
       const message: IncomingMessage = {
         source: 'SMS',
         content: `From: ${sms.from}

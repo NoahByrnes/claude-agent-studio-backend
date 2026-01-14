@@ -11,6 +11,9 @@ import { sandboxRoutes } from './routes/sandbox.js';
 import { monitoringRoutes, setConductorServiceGetter } from './routes/monitoring.js';
 import { configRoutes } from './routes/config.js';
 import templateConfigRoutes from './routes/template-config.js';
+import googleAuthRoutes from './routes/google-auth.js';
+import googleWebhookRoutes from './routes/google-webhooks.js';
+import googleWorkerRoutes from './routes/google-worker.js';
 import { initializeTemplateConfig } from './services/template-config.service.js';
 import { loadTemplates } from './config/templates.js';
 // Worker disabled until Redis is configured
@@ -54,6 +57,9 @@ await fastify.register(configRoutes);
 await fastify.register(templateConfigRoutes);
 await fastify.register(internalRoutes);
 await fastify.register(sandboxRoutes);
+await fastify.register(googleAuthRoutes);
+await fastify.register(googleWebhookRoutes);
+await fastify.register(googleWorkerRoutes);
 
 // Start server
 try {

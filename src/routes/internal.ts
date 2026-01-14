@@ -3,6 +3,7 @@ import { db } from '../lib/db.js';
 import { auditLogs, type NewAuditLog } from '../../db/schema.js';
 import { LogPublisherService } from '../services/log-publisher.service.js';
 import { eq, and, desc } from 'drizzle-orm';
+import * as verificationCodeService from '../services/verification-code.service.js';
 
 const logPublisher = LogPublisherService.getInstance();
 
@@ -178,5 +179,92 @@ export async function internalRoutes(fastify: FastifyInstance) {
       timestamp: new Date().toISOString(),
       service: 'internal-api',
     });
+  });
+
+  /**
+   * Get latest verification code (for Stu's autonomous 2FA)
+   * GET /api/internal/verification-code/latest
+   */
+  fastify.get('/api/internal/verification-code/latest', async (request, reply) => {
+    try {
+      const code = await verificationCodeService.getLatestVerificationCode();
+
+      if (!code) {
+        return reply.code(404).send({
+          success: false,
+          message: 'No verification code available',
+        });
+      }
+
+      return reply.send({
+        success: true,
+        code: code.code,
+        source: code.source,
+        sender: code.sender,
+        detectedAt: code.detectedAt,
+        expiresAt: code.expiresAt,
+        fullMessage: code.fullMessage,
+      });
+    } catch (error: any) {
+      return reply.code(500).send({
+        success: false,
+        error: error.message,
+      });
+    }
+  });
+
+  /**
+   * Get verification code from specific sender
+   * GET /api/internal/verification-code/sender/:sender
+   */
+  fastify.get<{
+    Params: { sender: string };
+  }>('/api/internal/verification-code/sender/:sender', async (request, reply) => {
+    try {
+      const { sender } = request.params;
+      const code = await verificationCodeService.getVerificationCodeFromSender(sender);
+
+      if (!code) {
+        return reply.code(404).send({
+          success: false,
+          message: `No verification code from sender: ${sender}`,
+        });
+      }
+
+      return reply.send({
+        success: true,
+        code: code.code,
+        source: code.source,
+        sender: code.sender,
+        detectedAt: code.detectedAt,
+        expiresAt: code.expiresAt,
+        fullMessage: code.fullMessage,
+      });
+    } catch (error: any) {
+      return reply.code(500).send({
+        success: false,
+        error: error.message,
+      });
+    }
+  });
+
+  /**
+   * Clear all verification codes
+   * DELETE /api/internal/verification-code/all
+   */
+  fastify.delete('/api/internal/verification-code/all', async (request, reply) => {
+    try {
+      await verificationCodeService.clearVerificationCodes();
+
+      return reply.send({
+        success: true,
+        message: 'All verification codes cleared',
+      });
+    } catch (error: any) {
+      return reply.code(500).send({
+        success: false,
+        error: error.message,
+      });
+    }
   });
 }
