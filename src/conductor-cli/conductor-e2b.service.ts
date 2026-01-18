@@ -2008,8 +2008,18 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
 
     let currentWorkerResponse = workerResponse;
     let conversationActive = true;
+    let loopCount = 0;
+    const MAX_LOOP_ITERATIONS = 20; // Circuit breaker
 
     while (conversationActive) {
+      loopCount++;
+      if (loopCount > MAX_LOOP_ITERATIONS) {
+        console.error(`🚨 INFINITE LOOP DETECTED! Breaking after ${MAX_LOOP_ITERATIONS} iterations`);
+        console.error(`   Worker: ${workerId}`);
+        console.error(`   Last response: ${currentWorkerResponse.result.substring(0, 200)}`);
+        conversationActive = false;
+        break;
+      }
       // Capture worker output to CLI feed
       addCLIOutput({
         timestamp: new Date(),
@@ -2061,32 +2071,47 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
         }
       }
 
-      // Case 3: Send conductor's full response to worker (may include commands + instructions)
-      // The worker can see what actions Stu is taking (spawning other workers, sending emails, etc.)
-      // and still receive instructions in the same message
-      console.log(`   📤 Conductor → Worker: ${conductorResponse.result.substring(0, 100)}...`);
+      // Case 3: Detect if conductor is actually talking to THIS worker
+      // If conductor's message is just status updates (no actual instruction), end conversation
+      const looksLikeStatusUpdate = conductorResponse.result.toLowerCase().includes('waiting') ||
+                                    conductorResponse.result.toLowerCase().includes('standing by') ||
+                                    conductorResponse.result.toLowerCase().includes('acknowledged') ||
+                                    (commands.length > 0 && conductorResponse.result.length < 200);
 
-      // Capture conductor's message to worker in CLI feed
-      addCLIOutput({
-        timestamp: new Date(),
-        source: 'worker',
-        sourceId: workerId,
-        content: `[CONDUCTOR → WORKER]: ${conductorResponse.result}`,
-        type: 'input',
-      });
+      if (looksLikeStatusUpdate && commands.length > 0) {
+        // Conductor issued commands but just sent status update to worker - conversation done
+        console.log(`   ✅ Conductor issued commands with status update, ending conversation`);
+        conversationActive = false;
+      } else if (commands.length === 0 && conductorResponse.result.trim().length > 0) {
+        // Conductor has actual instructions for worker - continue conversation
+        console.log(`   📤 Conductor → Worker: ${conductorResponse.result.substring(0, 100)}...`);
 
-      const sandboxInfo = this.workerSandboxes.get(workerId);
-      if (sandboxInfo) {
-        currentWorkerResponse = await sandboxInfo.executor.sendToSession(
-          workerId,
-          conductorResponse.result,
-          {
-            skipPermissions: true, // Workers run autonomously
-            // No explicit timeout - conductor manages worker lifecycle
-          }
-        );
+        // Capture conductor's message to worker in CLI feed
+        addCLIOutput({
+          timestamp: new Date(),
+          source: 'worker',
+          sourceId: workerId,
+          content: `[CONDUCTOR → WORKER]: ${conductorResponse.result}`,
+          type: 'input',
+        });
+
+        const sandboxInfo = this.workerSandboxes.get(workerId);
+        if (sandboxInfo) {
+          currentWorkerResponse = await sandboxInfo.executor.sendToSession(
+            workerId,
+            conductorResponse.result,
+            {
+              skipPermissions: true, // Workers run autonomously
+              // No explicit timeout - conductor manages worker lifecycle
+            }
+          );
+        } else {
+          console.log(`   ⚠️  Worker ${workerId} not found, ending conversation`);
+          conversationActive = false;
+        }
       } else {
-        console.log(`   ⚠️  Worker ${workerId} not found, ending conversation`);
+        // No meaningful message for worker - end conversation
+        console.log(`   ✅ No further instructions for worker, ending conversation`);
         conversationActive = false;
       }
     }
