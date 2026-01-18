@@ -2110,19 +2110,55 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
         }
       }
 
-      // Case 3: Detect if conductor is actually talking to THIS worker
-      // If conductor's message is just status updates (no actual instruction), end conversation
-      const looksLikeStatusUpdate = conductorResponse.result.toLowerCase().includes('waiting') ||
-                                    conductorResponse.result.toLowerCase().includes('standing by') ||
-                                    conductorResponse.result.toLowerCase().includes('acknowledged') ||
-                                    (commands.length > 0 && conductorResponse.result.length < 200);
+      // Case 3: Decide if conversation should continue
+      // Detect status updates vs actual instructions for worker
+      const responseText = conductorResponse.result.toLowerCase();
+      const statusUpdateKeywords = [
+        'waiting for',
+        'standing by',
+        'acknowledged',
+        'noted',
+        'understood',
+        'got it',
+        'will update',
+        'checking on',
+        'on it',
+      ];
 
-      if (looksLikeStatusUpdate && commands.length > 0) {
-        // Conductor issued commands but just sent status update to worker - conversation done
-        console.log(`   ✅ Conductor issued commands with status update, ending conversation`);
+      const hasStatusKeywords = statusUpdateKeywords.some(keyword => responseText.includes(keyword));
+
+      // Detect meaningful instructions (questions, requests, feedback)
+      const instructionKeywords = [
+        '?',  // Questions
+        'can you',
+        'please',
+        'try',
+        'change',
+        'update',
+        'fix',
+        'add',
+        'remove',
+        'check',
+        'verify',
+        'make sure',
+        'instead',
+        'also',
+      ];
+
+      const hasInstructions = instructionKeywords.some(keyword => responseText.includes(keyword));
+
+      // Decision logic:
+      if (commands.length > 0) {
+        // Conductor issued commands (email, SMS, spawn, kill, etc.)
+        // Don't continue conversation - conductor is done with this worker for now
+        console.log(`   ✅ Conductor issued commands, ending conversation with worker`);
         conversationActive = false;
-      } else if (commands.length === 0 && conductorResponse.result.trim().length > 0) {
-        // Conductor has actual instructions for worker - continue conversation
+      } else if (hasStatusKeywords && !hasInstructions) {
+        // Conductor's message is just status update with no actual instructions
+        console.log(`   ✅ Conductor sent status update (no instructions), ending conversation`);
+        conversationActive = false;
+      } else if (conductorResponse.result.trim().length > 50 && hasInstructions) {
+        // Conductor has meaningful instructions/questions for worker - continue conversation
         console.log(`   📤 Conductor → Worker: ${conductorResponse.result.substring(0, 100)}...`);
 
         // Capture conductor's message to worker in CLI feed
@@ -2150,12 +2186,16 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
         }
       } else {
         // No meaningful message for worker - end conversation
-        console.log(`   ✅ No further instructions for worker, ending conversation`);
+        const reason = conductorResponse.result.trim().length === 0
+          ? 'conductor sent empty message'
+          : 'message too short or lacks clear instructions';
+        console.log(`   ✅ Ending conversation: ${reason}`);
+        console.log(`   Message was: "${conductorResponse.result.substring(0, 100)}"`);
         conversationActive = false;
       }
     }
 
-    console.log(`✅ Conversation ended: Conductor ↔ Worker ${workerId.substring(0, 8)}`);
+    console.log(`✅ Conversation ended: Conductor ↔ Worker ${workerId.substring(0, 8)} (${loopCount} iterations)`);
   }
 
   /**
