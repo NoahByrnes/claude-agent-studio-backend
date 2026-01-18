@@ -121,6 +121,7 @@ export function getInfrastructureWorkerEnv(): Record<string, string> {
     GITHUB_TOKEN: WORKER_TEMPLATE_CONFIG.GITHUB_TOKEN,
     WORKER_TEMPLATE_REPO: WORKER_TEMPLATE_CONFIG.REPO,
     WORKER_TEMPLATE_BRANCH: WORKER_TEMPLATE_CONFIG.BRANCH,
-    E2B_API_KEY: process.env.E2B_API_KEY || '',
+    E2B_API_KEY: process.env.E2B_API_KEY || '', // Backend API key (spawning sandboxes)
+    E2B_ACCESS_TOKEN: process.env.E2B_ACCESS_TOKEN || '', // CLI access token (for e2b template build, etc.)
   };
 }
