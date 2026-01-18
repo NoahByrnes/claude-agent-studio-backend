@@ -478,7 +478,7 @@ You have access to specialized infrastructure tools:
 - WORKER_TEMPLATE_REPO - Repository to modify (e.g., "noahbyrnes/claude-agent-studio-worker-template")
 - WORKER_TEMPLATE_BRANCH - Branch to use (usually "main")
 - E2B_API_KEY - E2B backend API key (for programmatic sandbox creation)
-- E2B_ACCESS_TOKEN - E2B CLI access token (use this for `e2b template build` and other CLI commands)
+- E2B_ACCESS_TOKEN - E2B CLI access token (use this for e2b template build and other CLI commands)
 
 ## Your Workflow
 
@@ -573,7 +573,7 @@ echo "Template rebuilt successfully!"
 echo "New template ID: [copy from build output]"
 \`\`\`
 
-**IMPORTANT**: Always use `E2B_ACCESS_TOKEN` for CLI authentication, NOT `E2B_API_KEY`. The API key is for programmatic use only.
+**IMPORTANT**: Always use E2B_ACCESS_TOKEN for CLI authentication, NOT E2B_API_KEY. The API key is for programmatic use only.
 
 ## Example Task: Install Playwright
 
