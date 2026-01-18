@@ -35,31 +35,47 @@ export async function initMemoryBackup(): Promise<void> {
 }
 
 /**
- * Export memory from E2B sandbox to persistent storage (PostgreSQL + Redis cache)
- * Downloads the .claude-mem directory from the sandbox
+ * Export full conductor state from E2B sandbox to persistent storage (PostgreSQL + Redis cache)
+ * Downloads .claude-mem (learned knowledge) and .claude/projects (conversation history) directories
  */
 export async function exportMemoryFromSandbox(
   sandbox: Sandbox,
   conductorId: string
 ): Promise<void> {
   try {
-    console.log(`📦 Exporting memory from sandbox ${sandbox.sandboxId}...`);
+    console.log(`📦 Exporting full conductor state from sandbox ${sandbox.sandboxId}...`);
 
-    // Check if .claude-mem directory exists
+    // Check which directories exist
     const claudeMemCheck = await sandbox.commands.run('test -d /home/user/.claude-mem && echo "exists" || echo "missing"');
     const hasClaudeMem = claudeMemCheck.stdout.trim() === 'exists';
 
-    if (!hasClaudeMem) {
-      console.log('ℹ️  No .claude-mem directory found in sandbox');
+    const claudeProjectsCheck = await sandbox.commands.run('test -d /home/user/.claude/projects && echo "exists" || echo "missing"');
+    const hasClaudeProjects = claudeProjectsCheck.stdout.trim() === 'exists';
+
+    if (!hasClaudeMem && !hasClaudeProjects) {
+      console.log('ℹ️  No .claude-mem or .claude/projects directories found in sandbox');
       return;
     }
 
-    // Create tarball of claude-mem directory inside sandbox
-    console.log('   Including .claude-mem directory in backup');
-    const tarResult = await sandbox.commands.run('cd /home/user && tar -czf /tmp/conductor-memory.tar.gz .claude-mem');
+    // Build list of directories to include in tarball
+    const dirsToBackup: string[] = [];
+    if (hasClaudeMem) {
+      dirsToBackup.push('.claude-mem');
+      console.log('   Including .claude-mem directory (learned knowledge)');
+    }
+    if (hasClaudeProjects) {
+      dirsToBackup.push('.claude/projects');
+      console.log('   Including .claude/projects directory (conversation history)');
+    }
+
+    // Create tarball with both directories (if they exist)
+    const tarCommand = `cd /home/user && tar -czf /tmp/conductor-memory.tar.gz ${dirsToBackup.join(' ')}`;
+    const tarResult = await sandbox.commands.run(tarCommand);
 
     if (tarResult.exitCode !== 0) {
-      console.log('ℹ️  Failed to create memory tarball');
+      console.log('ℹ️  Failed to create state tarball');
+      console.log(`   Command: ${tarCommand}`);
+      console.log(`   Stderr: ${tarResult.stderr}`);
       return;
     }
 
@@ -94,7 +110,19 @@ export async function exportMemoryFromSandbox(
         });
       }
 
-      console.log(`✅ Memory exported to PostgreSQL: ${(buffer.length / 1024).toFixed(2)} KB`);
+      const sizeMB = buffer.length / (1024 * 1024);
+      const sizeDisplay = sizeMB >= 1
+        ? `${sizeMB.toFixed(2)} MB`
+        : `${(buffer.length / 1024).toFixed(2)} KB`;
+
+      console.log(`✅ Full conductor state exported to PostgreSQL: ${sizeDisplay}`);
+      if (hasClaudeMem && hasClaudeProjects) {
+        console.log(`   Includes: conversation history + learned knowledge`);
+      } else if (hasClaudeProjects) {
+        console.log(`   Includes: conversation history only`);
+      } else {
+        console.log(`   Includes: learned knowledge only`);
+      }
     } catch (dbError: any) {
       console.error(`❌ PostgreSQL export failed: ${dbError.message}`);
       throw dbError;
@@ -111,14 +139,14 @@ export async function exportMemoryFromSandbox(
       }
     }
   } catch (error: any) {
-    console.error('❌ Failed to export memory:', error.message);
-    // Don't throw - memory export is not critical for conductor operation
+    console.error('❌ Failed to export conductor state:', error.message);
+    // Don't throw - state export is not critical for conductor operation
   }
 }
 
 /**
- * Import memory from persistent storage to E2B sandbox
- * Uploads and extracts the .claude-mem directory to the sandbox
+ * Import full conductor state from persistent storage to E2B sandbox
+ * Uploads and extracts .claude-mem (learned knowledge) and .claude/projects (conversation history)
  * Checks Redis cache first, then PostgreSQL
  */
 export async function importMemoryToSandbox(
@@ -126,7 +154,7 @@ export async function importMemoryToSandbox(
   conductorId: string
 ): Promise<void> {
   try {
-    let memoryBuffer: Buffer | null = null;
+    let stateBuffer: Buffer | null = null;
     let source = '';
 
     // Try Redis cache first (fast path)
@@ -135,9 +163,15 @@ export async function importMemoryToSandbox(
         const redisKey = `${REDIS_MEMORY_KEY_PREFIX}${conductorId}`;
         const base64Data = await redisClient.get(redisKey);
         if (base64Data) {
-          memoryBuffer = Buffer.from(base64Data, 'base64');
+          stateBuffer = Buffer.from(base64Data, 'base64');
           source = `Redis cache`;
-          console.log(`📥 Found memory backup in Redis cache (${(memoryBuffer.length / 1024).toFixed(2)} KB)`);
+
+          const sizeMB = stateBuffer.length / (1024 * 1024);
+          const sizeDisplay = sizeMB >= 1
+            ? `${sizeMB.toFixed(2)} MB`
+            : `${(stateBuffer.length / 1024).toFixed(2)} KB`;
+
+          console.log(`📥 Found conductor state in Redis cache (${sizeDisplay})`);
         }
       } catch (redisError: any) {
         console.warn(`⚠️  Redis cache read failed: ${redisError.message}`);
@@ -145,7 +179,7 @@ export async function importMemoryToSandbox(
     }
 
     // Load from PostgreSQL if not in cache
-    if (!memoryBuffer) {
+    if (!stateBuffer) {
       try {
         const result = await db.select()
           .from(conductorMemory)
@@ -154,9 +188,15 @@ export async function importMemoryToSandbox(
 
         if (result.length > 0) {
           const memory = result[0];
-          memoryBuffer = Buffer.from(memory.memory_data, 'base64');
+          stateBuffer = Buffer.from(memory.memory_data, 'base64');
           source = `PostgreSQL`;
-          console.log(`📥 Found memory backup in PostgreSQL (${(memoryBuffer.length / 1024).toFixed(2)} KB)`);
+
+          const sizeMB = stateBuffer.length / (1024 * 1024);
+          const sizeDisplay = sizeMB >= 1
+            ? `${sizeMB.toFixed(2)} MB`
+            : `${(stateBuffer.length / 1024).toFixed(2)} KB`;
+
+          console.log(`📥 Found conductor state in PostgreSQL (${sizeDisplay})`);
 
           // Cache in Redis for next time
           if (redisClient) {
@@ -173,18 +213,18 @@ export async function importMemoryToSandbox(
       }
     }
 
-    // No memory found anywhere
-    if (!memoryBuffer) {
-      console.log('ℹ️  No existing memory backup found (Redis or PostgreSQL)');
+    // No state found anywhere
+    if (!stateBuffer) {
+      console.log('ℹ️  No existing conductor state found (Redis or PostgreSQL)');
       return;
     }
 
-    console.log(`📥 Importing memory from ${source}...`);
+    console.log(`📥 Importing conductor state from ${source}...`);
 
     // Upload to sandbox (convert Buffer to ArrayBuffer)
-    await sandbox.files.write('/tmp/conductor-memory.tar.gz', memoryBuffer.buffer as ArrayBuffer);
+    await sandbox.files.write('/tmp/conductor-memory.tar.gz', stateBuffer.buffer as ArrayBuffer);
 
-    // Extract in sandbox (.claude-mem directory)
+    // Extract in sandbox (.claude-mem and .claude/projects directories)
     try {
       const result = await sandbox.commands.run(
         'cd /home/user && tar -xzf /tmp/conductor-memory.tar.gz && rm /tmp/conductor-memory.tar.gz'
@@ -206,11 +246,12 @@ export async function importMemoryToSandbox(
       return;
     }
 
-    console.log(`✅ Memory imported to sandbox ${sandbox.sandboxId}`);
+    console.log(`✅ Full conductor state imported to sandbox ${sandbox.sandboxId}`);
+    console.log(`   Restored: conversation history + learned knowledge`);
   } catch (error: any) {
-    console.error('❌ Failed to import memory:', error.message);
+    console.error('❌ Failed to import conductor state:', error.message);
     console.error('   Full error:', error);
-    // Don't throw - memory import is not critical for conductor startup
+    // Don't throw - state import is not critical for conductor startup (will start fresh)
   }
 }
 
