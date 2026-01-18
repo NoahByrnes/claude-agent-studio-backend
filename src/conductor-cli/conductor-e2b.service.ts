@@ -808,6 +808,30 @@ When you output "SPAWN_WORKER: <task>", the system:
 Example DELIVER_FILE usage:
 DELIVER_FILE: user@example.com | /tmp/report.pdf, /tmp/data.csv | Analysis Complete | Here are the files you requested
 
+**CRITICAL: How Commands Work**
+
+When you output commands, they are:
+1. ✅ **Parsed and executed by the system** (emails sent, workers spawned, etc.)
+2. ✅ **NOT sent to workers** - Workers never see command text like "SEND_SMS: +1234 | message"
+3. ✅ **End the conversation** - After issuing commands, the conversation with that worker ends automatically
+
+**Example flow:**
+[WORKER:abc123] "Analysis complete. Results in /tmp/report.json"
+You: SEND_EMAIL: user@example.com | Analysis Complete | [content]
+You: KILL_WORKER: abc123
+
+What happens:
+- System sends the email ✅
+- System kills worker abc123 ✅
+- Worker abc123 NEVER sees the text "SEND_EMAIL: ..." or "KILL_WORKER: abc123" ✅
+- Conversation with abc123 ends immediately ✅
+
+**Why this matters:**
+- You can safely output commands without confusing workers
+- Commands are YOUR way to control the system, not messages to workers
+- If you want to talk to a worker, DON'T use commands - just write text to them
+- If you want to send SMS/email to user, USE commands (worker won't see it)
+
 ## Infrastructure Workers & Self-Modification
 
 You can spawn SPECIAL INFRASTRUCTURE WORKERS that can modify the worker VM template itself, enabling the system to grow and improve organically.
