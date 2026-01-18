@@ -2350,9 +2350,9 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
 
     console.log(`🛑 Killing worker: ${workerId}`);
 
-    // Close E2B sandbox
+    // Close E2B sandbox (use instance method - has API key in context)
     try {
-      await Sandbox.kill(sandboxInfo.sandbox.sandboxId);
+      await sandboxInfo.sandbox.kill();
       console.log(`   ✅ Worker sandbox closed: ${sandboxInfo.sandbox.sandboxId}`);
     } catch (error: any) {
       console.error(`   ⚠️  Error closing worker sandbox:`, error.message);
@@ -2642,7 +2642,8 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
     // Close all worker sandboxes
     for (const [workerId, sandboxInfo] of this.workerSandboxes.entries()) {
       try {
-        await Sandbox.kill(sandboxInfo.sandbox.sandboxId);
+        // Use instance method to kill sandbox (has API key in context)
+        await sandboxInfo.sandbox.kill();
         console.log(`   ✅ Closed worker sandbox: ${sandboxInfo.sandbox.sandboxId}`);
       } catch (error: any) {
         console.error(`   ⚠️  Error closing worker ${workerId}:`, error.message);
@@ -2652,7 +2653,8 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
     // Close conductor sandbox
     if (this.conductorSandbox) {
       try {
-        await Sandbox.kill(this.conductorSandbox.sandbox.sandboxId);
+        // Use instance method to kill sandbox (has API key in context)
+        await this.conductorSandbox.sandbox.kill();
         console.log(`   ✅ Closed conductor sandbox: ${this.conductorSandbox.sandbox.sandboxId}`);
       } catch (error: any) {
         console.error(`   ⚠️  Error closing conductor:`, error.message);

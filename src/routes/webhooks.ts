@@ -182,13 +182,19 @@ ${email.body}`,
           // Clear memory backups (conversation history)
           await clearMemoryBackups('default');
 
-          // Kill existing conductor service
+          // Kill existing conductor service and all E2B sandboxes
           if (conductorService) {
             try {
+              console.log(`   🔪 Killing existing conductor and worker E2B sandboxes...`);
               await conductorService.cleanup();
+              console.log(`   ✅ All E2B sandboxes terminated`);
             } catch (cleanupError: any) {
-              console.warn(`⚠️  Conductor cleanup warning: ${cleanupError.message}`);
+              console.error(`   ❌ Conductor cleanup error: ${cleanupError.message}`);
+              console.error(`   Full error:`, cleanupError);
+              // Continue anyway - we'll clear state and force fresh creation
             }
+          } else {
+            console.log(`   ℹ️  No active conductor service to clean up`);
           }
 
           // Reset conductor to force fresh creation on next message
