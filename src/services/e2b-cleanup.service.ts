@@ -37,9 +37,11 @@ export async function killSandboxesByTemplate(
     const paginator = Sandbox.list({ apiKey });
     const allSandboxes = [];
 
-    for await (const sandbox of paginator) {
-      allSandboxes.push(sandbox);
-    }
+    // Fetch all pages (first page + subsequent pages)
+    do {
+      const page = await paginator.nextItems();
+      allSandboxes.push(...page);
+    } while (paginator.hasNext);
 
     console.log(`   Found ${allSandboxes.length} total sandboxes`);
 
