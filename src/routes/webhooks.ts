@@ -10,6 +10,8 @@ import { ConductorE2BService } from '../conductor-cli/conductor-e2b.service.js';
 import type { IncomingMessage } from '../conductor-cli/types.js';
 import { sendEmail, sendSMS } from '../services/messaging.service.js';
 import * as verificationCodeService from '../services/verification-code.service.js';
+import { clearConductorState } from '../services/conductor-state.service.js';
+import { clearMemoryBackups } from '../services/memory.service.js';
 
 // Global conductor instance (initialized on first webhook)
 let conductorService: ConductorE2BService | null = null;
@@ -166,6 +168,59 @@ ${email.body}`,
           message: 'Verification code received and stored',
           code: verificationResult.code,
         });
+      }
+
+      // Check for /new-session command (force fresh conductor session)
+      const messageBody = sms.body.trim();
+      if (messageBody === '/new-session' || messageBody.toLowerCase() === '/new-session') {
+        console.log(`🔄 /new-session command received - clearing conductor state...`);
+
+        try {
+          // Clear conductor state (PostgreSQL + Redis)
+          await clearConductorState();
+
+          // Clear memory backups (conversation history)
+          await clearMemoryBackups('default');
+
+          // Kill existing conductor service
+          if (conductorService) {
+            try {
+              await conductorService.cleanup();
+            } catch (cleanupError: any) {
+              console.warn(`⚠️  Conductor cleanup warning: ${cleanupError.message}`);
+            }
+          }
+
+          // Reset conductor to force fresh creation on next message
+          conductorService = null;
+
+          console.log(`✅ Conductor state cleared - next message will start fresh session`);
+
+          // Send acknowledgment SMS
+          await sendSMS(
+            sms.from,
+            '🔄 Session reset complete! Send your next message to start a fresh conversation with Stu.',
+            'default-user'
+          );
+
+          return reply.send({
+            success: true,
+            message: 'Session reset - fresh conductor will be created on next message',
+          });
+        } catch (resetError: any) {
+          console.error(`❌ Failed to reset session: ${resetError.message}`);
+
+          await sendSMS(
+            sms.from,
+            `❌ Failed to reset session: ${resetError.message}`,
+            'default-user'
+          );
+
+          return reply.code(500).send({
+            success: false,
+            error: resetError.message,
+          });
+        }
       }
 
       // Normal message - route to Stu

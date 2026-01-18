@@ -222,26 +222,73 @@ export class ConductorE2BService {
 
         const executor = new E2BCLIExecutor(sandbox);
 
-        // Start conductor CLI session
-        const systemPrompt = this.config.systemPrompt || this.getDefaultConductorPrompt();
+        // Check for existing session files from previous conductor (conversation continuity)
+        console.log('   🔍 Checking for existing CLI session files...');
+        let cliSessionId: string;
 
-        // VALIDATION: Verify system prompt contains critical commands
-        console.log('   🔍 Validating system prompt...');
-        console.log(`   System prompt length: ${systemPrompt.length} characters`);
-        const hasSendSMS = systemPrompt.includes('SEND_SMS');
-        const hasSendEmail = systemPrompt.includes('SEND_EMAIL');
-        const hasSpawnWorker = systemPrompt.includes('SPAWN_WORKER');
-        console.log(`   Contains SEND_SMS: ${hasSendSMS}`);
-        console.log(`   Contains SEND_EMAIL: ${hasSendEmail}`);
-        console.log(`   Contains SPAWN_WORKER: ${hasSpawnWorker}`);
+        try {
+          const sessionCheckResult = await sandbox.commands.run(
+            'ls -t ~/.claude/projects/*.jsonl 2>/dev/null | head -1',
+            { timeoutMs: 5000 }
+          );
 
-        if (!hasSendSMS || !hasSendEmail || !hasSpawnWorker) {
-          console.error('   ❌ CRITICAL: System prompt missing essential commands!');
-          throw new Error('System prompt validation failed - missing commands');
+          if (sessionCheckResult.exitCode === 0 && sessionCheckResult.stdout.trim()) {
+            // Extract session ID from filename: ~/.claude/projects/<session-id>.jsonl
+            const sessionFilePath = sessionCheckResult.stdout.trim();
+            const sessionIdMatch = sessionFilePath.match(/([a-f0-9-]{36})\.jsonl$/);
+
+            if (sessionIdMatch) {
+              const existingSessionId = sessionIdMatch[1];
+              console.log(`   ✅ Found existing session file: ${existingSessionId}`);
+              console.log(`   📥 Resuming conversation from previous conductor session...`);
+
+              // Resume the existing session (preserves full conversation history)
+              cliSessionId = existingSessionId;
+
+              // Send a continuation message to verify session is alive
+              // This also appends the system prompt as a system message
+              const systemPrompt = this.config.systemPrompt || this.getDefaultConductorPrompt();
+              const testResponse = await executor.execute(
+                'Session resumed after container restart. Ready to continue.',
+                {
+                  sessionId: existingSessionId,
+                  appendSystemPrompt: systemPrompt, // Update system context
+                }
+              );
+
+              console.log(`   ✅ Successfully resumed session ${existingSessionId.substring(0, 8)}...`);
+              console.log(`   💬 Conversation continuity preserved!`);
+            } else {
+              throw new Error('Could not extract session ID from filename');
+            }
+          } else {
+            throw new Error('No session files found');
+          }
+        } catch (sessionError: any) {
+          // No existing session files or resume failed - start fresh
+          console.log(`   ℹ️  No resumable session found: ${sessionError.message}`);
+          console.log(`   🆕 Starting fresh CLI session...`);
+
+          const systemPrompt = this.config.systemPrompt || this.getDefaultConductorPrompt();
+
+          // VALIDATION: Verify system prompt contains critical commands
+          console.log('   🔍 Validating system prompt...');
+          console.log(`   System prompt length: ${systemPrompt.length} characters`);
+          const hasSendSMS = systemPrompt.includes('SEND_SMS');
+          const hasSendEmail = systemPrompt.includes('SEND_EMAIL');
+          const hasSpawnWorker = systemPrompt.includes('SPAWN_WORKER');
+          console.log(`   Contains SEND_SMS: ${hasSendSMS}`);
+          console.log(`   Contains SEND_EMAIL: ${hasSendEmail}`);
+          console.log(`   Contains SPAWN_WORKER: ${hasSpawnWorker}`);
+
+          if (!hasSendSMS || !hasSendEmail || !hasSpawnWorker) {
+            console.error('   ❌ CRITICAL: System prompt missing essential commands!');
+            throw new Error('System prompt validation failed - missing commands');
+          }
+
+          console.log('   ✅ System prompt validation passed');
+          cliSessionId = await executor.startSession(systemPrompt);
         }
-
-        console.log('   ✅ System prompt validation passed');
-        const cliSessionId = await executor.startSession(systemPrompt);
 
         this.conductorSession = {
           id: cliSessionId,
@@ -737,6 +784,19 @@ You have the **claude-mem plugin** running - it **automatically captures everyth
 - Your memory persists across backend deployments
 
 **No manual commands needed** - just work naturally and claude-mem learns from everything you do!
+
+## Session Management
+
+**Conversation Continuity:**
+- Your conversation history persists across E2B container restarts
+- If your E2B sandbox times out (1 hour), the next message automatically resumes from your last conversation
+- You maintain full context and remember everything from previous sessions
+
+**User Commands:**
+- \`/new-session\` - User can text this to start a completely fresh conversation, clearing all history
+  - This resets your conversation state but NOT your claude-mem learned knowledge
+  - Use case: Starting a new topic/project, or if conversation gets confused
+  - You will NOT see this command - system handles it automatically
 
 ## CRITICAL: You Have NO Direct Tool Access
 You CANNOT write files, run commands, or do any direct work. You ONLY orchestrate workers.
