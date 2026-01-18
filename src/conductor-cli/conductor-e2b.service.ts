@@ -2098,7 +2098,6 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
       }
 
       // Case 2: Execute any commands (email, SMS, spawn new workers, etc.)
-      // Stu can spawn additional workers, send emails, etc. while STILL working with this worker
       if (commands.length > 0) {
         const commandTypes = commands.map(c => c.type).join(', ');
         console.log(`   ⚙️  Executing commands: ${commandTypes}`);
@@ -2108,9 +2107,15 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
         if (nonKillCommands.length > 0) {
           await this.executeCommands(nonKillCommands);
         }
+
+        // CRITICAL: When conductor issues commands, DON'T send response text to worker
+        // The response contains command text like "SEND_SMS: +1234 | message" which would confuse the worker
+        console.log(`   ✅ Conductor issued commands, ending conversation (not sending response to worker)`);
+        conversationActive = false;
+        continue; // Skip to next loop iteration - explicit exit, don't send anything to worker
       }
 
-      // Case 3: Decide if conversation should continue
+      // Case 3: No commands - decide if we should continue conversation
       // Detect status updates vs actual instructions for worker
       const responseText = conductorResponse.result.toLowerCase();
       const statusUpdateKeywords = [
@@ -2147,17 +2152,15 @@ IMPORTANT: Review all PRs before approving. Never auto-merge infrastructure chan
 
       const hasInstructions = instructionKeywords.some(keyword => responseText.includes(keyword));
 
-      // Decision logic:
-      if (commands.length > 0) {
-        // Conductor issued commands (email, SMS, spawn, kill, etc.)
-        // Don't continue conversation - conductor is done with this worker for now
-        console.log(`   ✅ Conductor issued commands, ending conversation with worker`);
-        conversationActive = false;
-      } else if (hasStatusKeywords && !hasInstructions) {
+      // Decision logic for messages WITHOUT commands:
+      if (hasStatusKeywords && !hasInstructions) {
         // Conductor's message is just status update with no actual instructions
         console.log(`   ✅ Conductor sent status update (no instructions), ending conversation`);
         conversationActive = false;
-      } else if (conductorResponse.result.trim().length > 50 && hasInstructions) {
+        continue; // Explicit exit
+      }
+
+      if (conductorResponse.result.trim().length > 50 && hasInstructions) {
         // Conductor has meaningful instructions/questions for worker - continue conversation
         console.log(`   📤 Conductor → Worker: ${conductorResponse.result.substring(0, 100)}...`);
 
