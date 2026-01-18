@@ -4,6 +4,8 @@ import { auditLogs, type NewAuditLog } from '../../db/schema.js';
 import { LogPublisherService } from '../services/log-publisher.service.js';
 import { eq, and, desc } from 'drizzle-orm';
 import * as verificationCodeService from '../services/verification-code.service.js';
+import * as memoryService from '../services/memory.service.js';
+import { clearConductorState } from '../services/conductor-state.service.js';
 
 const logPublisher = LogPublisherService.getInstance();
 
@@ -261,6 +263,35 @@ export async function internalRoutes(fastify: FastifyInstance) {
         message: 'All verification codes cleared',
       });
     } catch (error: any) {
+      return reply.code(500).send({
+        success: false,
+        error: error.message,
+      });
+    }
+  });
+
+  /**
+   * Clear conductor state and force fresh session
+   * POST /api/internal/conductor/clear
+   */
+  fastify.post('/api/internal/conductor/clear', async (request, reply) => {
+    try {
+      console.log('🔄 API: Clearing conductor state...');
+
+      // Clear memory backups (PostgreSQL + Redis)
+      await memoryService.clearMemoryBackups('default');
+
+      // Clear in-memory conductor state
+      await clearConductorState();
+
+      console.log('✅ API: Conductor state cleared successfully');
+
+      return reply.send({
+        success: true,
+        message: 'Conductor state cleared - next SMS will create fresh session with new system prompt',
+      });
+    } catch (error: any) {
+      console.error('❌ API: Failed to clear conductor state:', error.message);
       return reply.code(500).send({
         success: false,
         error: error.message,
