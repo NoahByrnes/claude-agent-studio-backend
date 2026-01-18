@@ -12,6 +12,8 @@ import { sendEmail, sendSMS } from '../services/messaging.service.js';
 import * as verificationCodeService from '../services/verification-code.service.js';
 import { clearConductorState } from '../services/conductor-state.service.js';
 import { clearMemoryBackups } from '../services/memory.service.js';
+import { killAllConductors, killAllWorkers, killAllInfrastructureWorkers } from '../services/e2b-cleanup.service.js';
+import { E2B_TEMPLATES } from '../config/templates.js';
 
 // Global conductor instance (initialized on first webhook)
 let conductorService: ConductorE2BService | null = null;
@@ -170,62 +172,162 @@ ${email.body}`,
         });
       }
 
-      // Check for /new-session command (force fresh conductor session)
-      const messageBody = sms.body.trim();
-      if (messageBody === '/new-session' || messageBody.toLowerCase() === '/new-session') {
-        console.log(`🔄 /new-session command received - clearing conductor state...`);
+      // Check for SMS commands
+      const messageBody = sms.body.trim().toLowerCase();
+      const e2bApiKey = process.env.E2B_API_KEY;
+
+      if (!e2bApiKey) {
+        console.error('❌ E2B_API_KEY not configured - commands disabled');
+      }
+
+      // /help - List available commands
+      if (messageBody === '/help') {
+        const helpText = `📚 Available Commands:
+
+/help - Show this help message
+
+/new-stu - Kill all Stu (conductor) instances, keep workers running
+Use when: Conversation gets confused but workers are doing good work
+
+/kill-workers - Kill all workers, keep Stu running
+Use when: Workers are stuck/broken, want to start fresh tasks
+
+/new-session - NUCLEAR: Kill everything (Stu + all workers)
+Use when: Complete fresh start needed
+
+💡 Tip: Just text normally to talk to Stu!`;
+
+        await sendSMS(sms.from, helpText, 'default-user');
+
+        return reply.send({
+          success: true,
+          message: 'Help sent',
+        });
+      }
+
+      // /new-stu - Kill all conductors, keep workers alive
+      if (messageBody === '/new-stu') {
+        console.log(`🔄 /new-stu command received - killing all conductor sandboxes...`);
 
         try {
-          // Clear conductor state (PostgreSQL + Redis)
+          if (!e2bApiKey) {
+            throw new Error('E2B_API_KEY not configured');
+          }
+
+          // Kill ALL conductor sandboxes (including orphaned ones)
+          const result = await killAllConductors(E2B_TEMPLATES.CONDUCTOR, e2bApiKey);
+
+          // Clear conductor state
           await clearConductorState();
 
           // Clear memory backups (conversation history)
           await clearMemoryBackups('default');
 
-          // Kill existing conductor service and all E2B sandboxes
-          if (conductorService) {
-            try {
-              console.log(`   🔪 Killing existing conductor and worker E2B sandboxes...`);
-              await conductorService.cleanup();
-              console.log(`   ✅ All E2B sandboxes terminated`);
-            } catch (cleanupError: any) {
-              console.error(`   ❌ Conductor cleanup error: ${cleanupError.message}`);
-              console.error(`   Full error:`, cleanupError);
-              // Continue anyway - we'll clear state and force fresh creation
-            }
-          } else {
-            console.log(`   ℹ️  No active conductor service to clean up`);
-          }
-
-          // Reset conductor to force fresh creation on next message
+          // Reset conductor service to force fresh creation
           conductorService = null;
 
-          console.log(`✅ Conductor state cleared - next message will start fresh session`);
+          console.log(`✅ All conductors killed: ${result.killed.length}/${result.total}`);
 
-          // Send acknowledgment SMS
           await sendSMS(
             sms.from,
-            '🔄 Session reset complete! Send your next message to start a fresh conversation with Stu.',
+            `🔄 Stu reset! Killed ${result.killed.length} conductor${result.killed.length !== 1 ? 's' : ''}. Workers still running. Send your next message to start fresh.`,
             'default-user'
           );
 
           return reply.send({
             success: true,
-            message: 'Session reset - fresh conductor will be created on next message',
+            message: 'All conductors killed',
+            result,
           });
-        } catch (resetError: any) {
-          console.error(`❌ Failed to reset session: ${resetError.message}`);
+        } catch (error: any) {
+          console.error(`❌ Failed to kill conductors: ${error.message}`);
+          await sendSMS(sms.from, `❌ Failed to reset Stu: ${error.message}`, 'default-user');
+          return reply.code(500).send({ success: false, error: error.message });
+        }
+      }
+
+      // /kill-workers - Kill all workers and infrastructure workers, keep conductor
+      if (messageBody === '/kill-workers') {
+        console.log(`🔄 /kill-workers command received - killing all worker sandboxes...`);
+
+        try {
+          if (!e2bApiKey) {
+            throw new Error('E2B_API_KEY not configured');
+          }
+
+          // Kill standard workers
+          const workerResult = await killAllWorkers(E2B_TEMPLATES.WORKER, e2bApiKey);
+
+          // Kill infrastructure workers
+          const infraResult = await killAllInfrastructureWorkers(E2B_TEMPLATES.INFRASTRUCTURE, e2bApiKey);
+
+          const totalKilled = workerResult.killed.length + infraResult.killed.length;
+          const totalCount = workerResult.total + infraResult.total;
+
+          console.log(`✅ All workers killed: ${totalKilled}/${totalCount}`);
 
           await sendSMS(
             sms.from,
-            `❌ Failed to reset session: ${resetError.message}`,
+            `🧹 Killed ${totalKilled} worker${totalKilled !== 1 ? 's' : ''} (${workerResult.killed.length} standard, ${infraResult.killed.length} infrastructure). Stu is still running.`,
             'default-user'
           );
 
-          return reply.code(500).send({
-            success: false,
-            error: resetError.message,
+          return reply.send({
+            success: true,
+            message: 'All workers killed',
+            workers: workerResult,
+            infrastructure: infraResult,
           });
+        } catch (error: any) {
+          console.error(`❌ Failed to kill workers: ${error.message}`);
+          await sendSMS(sms.from, `❌ Failed to kill workers: ${error.message}`, 'default-user');
+          return reply.code(500).send({ success: false, error: error.message });
+        }
+      }
+
+      // /new-session - Nuclear option: Kill EVERYTHING
+      if (messageBody === '/new-session') {
+        console.log(`🔄 /new-session command received - NUCLEAR RESET (kill all E2B sandboxes)...`);
+
+        try {
+          if (!e2bApiKey) {
+            throw new Error('E2B_API_KEY not configured');
+          }
+
+          // Kill ALL sandboxes across all templates
+          const conductorResult = await killAllConductors(E2B_TEMPLATES.CONDUCTOR, e2bApiKey);
+          const workerResult = await killAllWorkers(E2B_TEMPLATES.WORKER, e2bApiKey);
+          const infraResult = await killAllInfrastructureWorkers(E2B_TEMPLATES.INFRASTRUCTURE, e2bApiKey);
+
+          const totalKilled = conductorResult.killed.length + workerResult.killed.length + infraResult.killed.length;
+          const totalCount = conductorResult.total + workerResult.total + infraResult.total;
+
+          // Clear all state
+          await clearConductorState();
+          await clearMemoryBackups('default');
+
+          // Reset conductor service
+          conductorService = null;
+
+          console.log(`✅ NUCLEAR RESET COMPLETE: ${totalKilled}/${totalCount} sandboxes killed`);
+
+          await sendSMS(
+            sms.from,
+            `💥 Nuclear reset complete! Killed ${totalKilled} sandbox${totalKilled !== 1 ? 'es' : ''} (${conductorResult.killed.length} conductors, ${workerResult.killed.length} workers, ${infraResult.killed.length} infrastructure). Everything fresh!`,
+            'default-user'
+          );
+
+          return reply.send({
+            success: true,
+            message: 'Nuclear reset complete',
+            conductors: conductorResult,
+            workers: workerResult,
+            infrastructure: infraResult,
+          });
+        } catch (error: any) {
+          console.error(`❌ Failed to execute nuclear reset: ${error.message}`);
+          await sendSMS(sms.from, `❌ Failed to reset: ${error.message}`, 'default-user');
+          return reply.code(500).send({ success: false, error: error.message });
         }
       }
 
