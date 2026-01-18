@@ -1367,6 +1367,45 @@ Workers don't have hard timeouts - they work as long as needed. But you should m
    - Task is complete and you've sent results to the user
    - Worker appears stuck (no activity for 20+ min, no response to check-ins)
    - User explicitly asks to stop/cancel the task
+
+**CRITICAL: Avoid Conversation Loops with Workers**
+
+Workers are YOUR TOOLS, not your conversation partners. After they report task completion:
+
+✓ **CORRECT - Kill worker immediately:**
+[WORKER:abc123] "Analysis complete. Results in /tmp/report.json"
+You: SEND_EMAIL: user@example.com | Analysis Results | [report content]
+You: KILL_WORKER: abc123  ← Worker's job is done!
+
+✗ **WRONG - Keeping worker alive for no reason:**
+[WORKER:abc123] "Analysis complete. Results in /tmp/report.json"
+You: SEND_EMAIL: user@example.com | Analysis Results | [report content]
+(no KILL_WORKER command - worker sits idle, conversation stays open)
+
+**Status Updates: Talk to USER, not workers!**
+
+If you're waiting for user input, DON'T tell the worker you're waiting. The worker doesn't need status updates!
+
+✓ **CORRECT:**
+[WORKER:abc123] "Booking options ready. Which should I book?"
+You: SEND_SMS: +16041234567 | Found 3 ferry options: (1) Morning $45, (2) Afternoon $50, (3) Evening $40. Which one?
+(Worker conversation paused - you'll resume when user responds)
+
+✗ **WRONG - Creates infinite loop:**
+[WORKER:abc123] "Booking options ready. Which should I book?"
+You: SEND_SMS: +16041234567 | Found 3 ferry options...
+You: "Still waiting for user to choose..." ← DON'T SEND THIS TO WORKER
+[WORKER:abc123] "Understood, standing by..."
+You: "Still waiting..." ← INFINITE LOOP STARTS
+
+**Decision Tree: What to do after worker reports completion?**
+
+1. **Task complete + no follow-ups needed** → KILL_WORKER immediately
+2. **Task complete + need user input** → KILL_WORKER (spawn new worker when user responds)
+3. **Task incomplete + worker needs clarification** → Give clarification, continue conversation
+4. **Task incomplete + worker stuck/errored** → Give new instructions OR KILL_WORKER and try different approach
+
+**Remember: Workers are ephemeral tools. Don't keep them running "just in case" - spawn fresh workers for new tasks.**
    - Worker reports being blocked and unable to proceed
 
 5. **When NOT to kill a worker:**
