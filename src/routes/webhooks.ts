@@ -442,4 +442,38 @@ Message: ${sms.body}`,
       return reply.code(500).send({ error: error.message });
     }
   });
+
+  // Test route - force conductor recreation with memory import
+  fastify.post('/api/webhooks/conductor/test-recreation', async (request, reply) => {
+    try {
+      console.log('🧪 TEST: Forcing conductor recreation...');
+
+      // Kill existing conductor
+      if (conductorService) {
+        console.log('   Killing existing conductor...');
+        await conductorService.cleanup();
+      }
+
+      // Clear from memory (but NOT from database/Redis - we want to test import)
+      conductorService = null;
+      console.log('   Cleared conductor from memory');
+
+      // Create new conductor (will trigger import)
+      console.log('   Creating new conductor (will attempt memory import)...');
+      const conductor = await initConductor();
+
+      const conductorSession = conductor.getConductorSession();
+
+      return reply.send({
+        success: true,
+        message: 'Conductor recreated successfully',
+        sessionId: conductorSession?.id,
+        sandboxId: conductorSession?.sandboxId,
+        note: 'Check logs for tar extraction diagnostics'
+      });
+    } catch (error: any) {
+      console.error('❌ Test recreation error:', error);
+      return reply.code(500).send({ error: error.message });
+    }
+  });
 }
