@@ -248,10 +248,9 @@ export async function importMemoryToSandbox(
     console.log(`      stateBuffer.byteOffset: ${stateBuffer.byteOffset}`);
     console.log(`      stateBuffer.buffer.byteLength: ${stateBuffer.buffer.byteLength}`);
 
-    // Upload to sandbox
-    // IMPORTANT: Create a proper ArrayBuffer without offset issues
-    // Using .buffer directly can cause corruption if Buffer is a view with byteOffset
-    // Solution: slice() creates a new Buffer, then .buffer gets its clean ArrayBuffer
+    // Upload to sandbox as Blob to ensure binary handling
+    // IMPORTANT: Using Blob with proper MIME type ensures E2B treats it as binary
+    // ArrayBuffer was being misinterpreted as text by E2B
     const cleanBuffer = stateBuffer.slice(); // Creates new Buffer without offset issues
 
     console.log(`   📊 After slice():`);
@@ -259,7 +258,11 @@ export async function importMemoryToSandbox(
     console.log(`      cleanBuffer.byteOffset: ${cleanBuffer.byteOffset}`);
     console.log(`      cleanBuffer.buffer.byteLength: ${cleanBuffer.buffer.byteLength}`);
 
-    await sandbox.files.write('/tmp/conductor-memory.tar.gz', cleanBuffer.buffer as ArrayBuffer);
+    // Create Blob with gzip MIME type to force binary handling
+    const blob = new Blob([cleanBuffer], { type: 'application/gzip' });
+    console.log(`   📦 Uploading as Blob (type: application/gzip, size: ${blob.size})`);
+
+    await sandbox.files.write('/tmp/conductor-memory.tar.gz', blob);
 
     // Diagnostic: Check tarball integrity before extraction
     try {
