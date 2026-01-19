@@ -222,9 +222,11 @@ export async function importMemoryToSandbox(
     console.log(`📥 Importing conductor state from ${source}...`);
 
     // Upload to sandbox
-    // IMPORTANT: Pass Buffer directly (it extends Uint8Array which E2B accepts)
-    // Using .buffer can cause corruption if Buffer is a view with byteOffset
-    await sandbox.files.write('/tmp/conductor-memory.tar.gz', new Uint8Array(stateBuffer));
+    // IMPORTANT: Create a proper ArrayBuffer without offset issues
+    // Using .buffer directly can cause corruption if Buffer is a view with byteOffset
+    // Solution: slice() creates a new Buffer, then .buffer gets its clean ArrayBuffer
+    const cleanBuffer = stateBuffer.slice(); // Creates new Buffer without offset issues
+    await sandbox.files.write('/tmp/conductor-memory.tar.gz', cleanBuffer.buffer as ArrayBuffer);
 
     // Diagnostic: Check tarball integrity before extraction
     try {
