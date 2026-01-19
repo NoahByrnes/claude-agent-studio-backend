@@ -80,7 +80,11 @@ export async function exportMemoryFromSandbox(
     }
 
     // Download the tarball
-    // CRITICAL: E2B files.read() can return either string or ArrayBuffer
+    // CRITICAL: Must verify the tar file exists and has correct size
+    const tarCheck = await sandbox.commands.run('ls -lh /tmp/conductor-memory.tar.gz');
+    console.log(`   📁 Tar file on disk: ${tarCheck.stdout.trim()}`);
+
+    // Read the file - E2B may return string or ArrayBuffer
     const memoryDataRaw = await sandbox.files.read('/tmp/conductor-memory.tar.gz');
 
     // DIAGNOSTIC: Log what we received from E2B
@@ -90,11 +94,17 @@ export async function exportMemoryFromSandbox(
     // Handle both string and ArrayBuffer returns from E2B
     let buffer: Buffer;
     if (typeof memoryDataRaw === 'string') {
-      // E2B returned string - assume it's base64 encoded binary data
-      console.log(`      Converting from base64 string...`);
-      buffer = Buffer.from(memoryDataRaw, 'base64');
+      // E2B returned string - this is WRONG for binary files
+      // The file content was corrupted during read
+      console.error(`      ⚠️  E2B returned String for binary .tar.gz file!`);
+      console.error(`      String length: ${memoryDataRaw.length} chars`);
+      console.error(`      First 100 chars: ${memoryDataRaw.substring(0, 100)}`);
+
+      // Try to salvage by reading as latin1 (byte-to-char mapping)
+      buffer = Buffer.from(memoryDataRaw, 'latin1');
+      console.log(`      Converted via latin1: ${buffer.length} bytes`);
     } else {
-      // E2B returned ArrayBuffer
+      // E2B returned ArrayBuffer (expected for binary)
       console.log(`      Converting from ArrayBuffer...`);
       buffer = Buffer.from(memoryDataRaw as ArrayBuffer);
     }
@@ -248,21 +258,19 @@ export async function importMemoryToSandbox(
     console.log(`      stateBuffer.byteOffset: ${stateBuffer.byteOffset}`);
     console.log(`      stateBuffer.buffer.byteLength: ${stateBuffer.buffer.byteLength}`);
 
-    // Upload to sandbox as Blob to ensure binary handling
-    // IMPORTANT: Using Blob with proper MIME type ensures E2B treats it as binary
-    // ArrayBuffer was being misinterpreted as text by E2B
-    const cleanBuffer = stateBuffer.slice(); // Creates new Buffer without offset issues
+    // Upload to sandbox - must create TRUE copy, not a view
+    // CRITICAL: Buffer.slice() creates a VIEW with byteOffset
+    // We need Buffer.from() to create a new Buffer with byteOffset=0
+    const cleanBuffer = Buffer.from(stateBuffer); // True copy, byteOffset=0
 
-    console.log(`   📊 After slice():`);
+    console.log(`   📊 After Buffer.from():`);
     console.log(`      cleanBuffer.length: ${cleanBuffer.length}`);
     console.log(`      cleanBuffer.byteOffset: ${cleanBuffer.byteOffset}`);
     console.log(`      cleanBuffer.buffer.byteLength: ${cleanBuffer.buffer.byteLength}`);
 
-    // Create Blob with gzip MIME type to force binary handling
-    const blob = new Blob([cleanBuffer], { type: 'application/gzip' });
-    console.log(`   📦 Uploading as Blob (type: application/gzip, size: ${blob.size})`);
-
-    await sandbox.files.write('/tmp/conductor-memory.tar.gz', blob);
+    // Upload as ArrayBuffer (cleanBuffer.buffer now has byteOffset=0)
+    console.log(`   📦 Uploading as ArrayBuffer (size: ${cleanBuffer.buffer.byteLength})`);
+    await sandbox.files.write('/tmp/conductor-memory.tar.gz', cleanBuffer.buffer as ArrayBuffer);
 
     // Diagnostic: Check tarball integrity before extraction
     try {
