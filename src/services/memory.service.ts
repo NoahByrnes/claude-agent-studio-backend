@@ -224,23 +224,41 @@ export async function importMemoryToSandbox(
     // Upload to sandbox (convert Buffer to ArrayBuffer)
     await sandbox.files.write('/tmp/conductor-memory.tar.gz', stateBuffer.buffer as ArrayBuffer);
 
-    // Extract in sandbox (.claude-mem and .claude/projects directories)
+    // Diagnostic: Check tarball integrity before extraction
     try {
-      const result = await sandbox.commands.run(
-        'cd /home/user && tar -xzf /tmp/conductor-memory.tar.gz && rm /tmp/conductor-memory.tar.gz'
+      const listResult = await sandbox.commands.run(
+        'tar -tzf /tmp/conductor-memory.tar.gz | head -20',
+        { timeoutMs: 10000 }
       );
+      console.log('   📋 Tarball contents (first 20 files):');
+      console.log(listResult.stdout || '(empty)');
+    } catch (listError: any) {
+      console.error('   ⚠️  Cannot list tarball contents:', listError.message);
+    }
 
-      if (result.exitCode !== 0) {
-        console.error(`❌ Tar extraction failed (exit ${result.exitCode})`);
-        console.error(`   Stdout: ${result.stdout}`);
-        console.error(`   Stderr: ${result.stderr}`);
+    // Extract in sandbox (.claude-mem and .claude/projects directories)
+    // Use sh -c to capture stderr even when command fails
+    try {
+      const extractCommand = 'cd /home/user && tar -xzvf /tmp/conductor-memory.tar.gz 2>&1; echo "EXIT_CODE=$?"';
+      const result = await sandbox.commands.run(extractCommand, { timeoutMs: 30000 });
 
-        // Clean up failed tar file
+      console.log('   📦 Tar extraction output:');
+      console.log(result.stdout.substring(0, 1000)); // First 1000 chars
+
+      // Check if extraction succeeded (look for EXIT_CODE=0)
+      if (result.stdout.includes('EXIT_CODE=0')) {
+        console.log('   ✅ Tar extraction succeeded');
+        // Clean up tarball
+        await sandbox.commands.run('rm -f /tmp/conductor-memory.tar.gz');
+      } else {
+        console.error('   ❌ Tar extraction failed');
+        console.error(`   Full output: ${result.stdout}`);
         await sandbox.commands.run('rm -f /tmp/conductor-memory.tar.gz');
         return;
       }
     } catch (tarError: any) {
       console.error('❌ Tar extraction error:', tarError.message);
+      console.error('   Error details:', tarError);
       // Clean up
       await sandbox.commands.run('rm -f /tmp/conductor-memory.tar.gz');
       return;
