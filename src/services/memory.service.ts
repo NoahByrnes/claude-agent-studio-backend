@@ -81,7 +81,18 @@ export async function exportMemoryFromSandbox(
 
     // Download the tarball
     const memoryData = await sandbox.files.read('/tmp/conductor-memory.tar.gz');
+
+    // DIAGNOSTIC: Log what we received from E2B
+    console.log(`   📥 Downloaded from E2B:`);
+    console.log(`      Type: ${memoryData.constructor?.name}`);
+    console.log(`      byteLength: ${(memoryData as ArrayBuffer).byteLength}`);
+
     const buffer = Buffer.from(memoryData);
+    console.log(`   📦 Converted to Buffer:`);
+    console.log(`      buffer.length: ${buffer.length}`);
+    console.log(`      buffer.byteOffset: ${buffer.byteOffset}`);
+    console.log(`      buffer.buffer.byteLength: ${buffer.buffer.byteLength}`);
+
     const base64Data = buffer.toString('base64');
     const sizeBytes = buffer.length.toString();
 
@@ -221,11 +232,23 @@ export async function importMemoryToSandbox(
 
     console.log(`📥 Importing conductor state from ${source}...`);
 
+    // DIAGNOSTIC: Check buffer before upload
+    console.log(`   📊 Buffer to upload:`);
+    console.log(`      stateBuffer.length: ${stateBuffer.length}`);
+    console.log(`      stateBuffer.byteOffset: ${stateBuffer.byteOffset}`);
+    console.log(`      stateBuffer.buffer.byteLength: ${stateBuffer.buffer.byteLength}`);
+
     // Upload to sandbox
     // IMPORTANT: Create a proper ArrayBuffer without offset issues
     // Using .buffer directly can cause corruption if Buffer is a view with byteOffset
     // Solution: slice() creates a new Buffer, then .buffer gets its clean ArrayBuffer
     const cleanBuffer = stateBuffer.slice(); // Creates new Buffer without offset issues
+
+    console.log(`   📊 After slice():`);
+    console.log(`      cleanBuffer.length: ${cleanBuffer.length}`);
+    console.log(`      cleanBuffer.byteOffset: ${cleanBuffer.byteOffset}`);
+    console.log(`      cleanBuffer.buffer.byteLength: ${cleanBuffer.buffer.byteLength}`);
+
     await sandbox.files.write('/tmp/conductor-memory.tar.gz', cleanBuffer.buffer as ArrayBuffer);
 
     // Diagnostic: Check tarball integrity before extraction
