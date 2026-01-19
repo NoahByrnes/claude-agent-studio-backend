@@ -84,12 +84,12 @@ export async function exportMemoryFromSandbox(
 
     // DIAGNOSTIC: Log what we received from E2B
     console.log(`   📥 Downloaded from E2B:`);
-    console.log(`      Type: ${memoryData.constructor?.name}`);
-    if (memoryData instanceof ArrayBuffer) {
-      console.log(`      byteLength: ${memoryData.byteLength}`);
+    console.log(`      Type: ${memoryData?.constructor?.name || typeof memoryData}`);
+    if (typeof memoryData === 'object' && memoryData !== null && 'byteLength' in memoryData) {
+      console.log(`      byteLength: ${(memoryData as ArrayBuffer).byteLength}`);
     }
 
-    const buffer = Buffer.from(memoryData as ArrayBuffer);
+    const buffer = Buffer.from(memoryData as unknown as ArrayBuffer);
     console.log(`   📦 Converted to Buffer:`);
     console.log(`      buffer.length: ${buffer.length}`);
     console.log(`      buffer.byteOffset: ${buffer.byteOffset}`);
