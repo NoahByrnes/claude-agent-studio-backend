@@ -80,16 +80,24 @@ export async function exportMemoryFromSandbox(
     }
 
     // Download the tarball
-    const memoryData = await sandbox.files.read('/tmp/conductor-memory.tar.gz');
+    // CRITICAL: E2B files.read() can return either string or ArrayBuffer
+    const memoryDataRaw = await sandbox.files.read('/tmp/conductor-memory.tar.gz');
 
     // DIAGNOSTIC: Log what we received from E2B
     console.log(`   📥 Downloaded from E2B:`);
-    console.log(`      Type: ${memoryData?.constructor?.name || typeof memoryData}`);
-    if (typeof memoryData === 'object' && memoryData !== null && 'byteLength' in memoryData) {
-      console.log(`      byteLength: ${(memoryData as ArrayBuffer).byteLength}`);
-    }
+    console.log(`      Type: ${memoryDataRaw?.constructor?.name || typeof memoryDataRaw}`);
 
-    const buffer = Buffer.from(memoryData as unknown as ArrayBuffer);
+    // Handle both string and ArrayBuffer returns from E2B
+    let buffer: Buffer;
+    if (typeof memoryDataRaw === 'string') {
+      // E2B returned string - assume it's base64 encoded binary data
+      console.log(`      Converting from base64 string...`);
+      buffer = Buffer.from(memoryDataRaw, 'base64');
+    } else {
+      // E2B returned ArrayBuffer
+      console.log(`      Converting from ArrayBuffer...`);
+      buffer = Buffer.from(memoryDataRaw as ArrayBuffer);
+    }
     console.log(`   📦 Converted to Buffer:`);
     console.log(`      buffer.length: ${buffer.length}`);
     console.log(`      buffer.byteOffset: ${buffer.byteOffset}`);
