@@ -119,9 +119,20 @@ ${email.body}`,
         const response = await conductor.sendToConductor(message);
         return reply.send({ success: true, sessionId: response.session_id });
       } catch (innerError: any) {
+        // Debug logging to understand error structure
+        console.log('🔍 Error caught in email webhook:');
+        console.log('   Type:', innerError.constructor?.name);
+        console.log('   Message:', innerError.message);
+        console.log('   Full error:', innerError.toString());
+
         // Check if E2B sandbox died (expired after 1 hour)
-        if (innerError.message?.includes('Sandbox is probably not running anymore') ||
-            innerError.message?.includes('NotFoundError')) {
+        const errorMessage = innerError.message || innerError.toString() || '';
+        const isSandboxExpired =
+          errorMessage.includes('Sandbox is probably not running anymore') ||
+          errorMessage.includes('NotFoundError') ||
+          errorMessage.includes('sandbox is not running');
+
+        if (isSandboxExpired) {
           console.log('🔄 E2B sandbox expired, creating new conductor...');
 
           // Reset conductor to force recreation
@@ -134,6 +145,7 @@ ${email.body}`,
         }
 
         // Re-throw if it's a different error
+        console.log('⚠️  Not a sandbox expiry error, re-throwing...');
         throw innerError;
       }
     } catch (error: any) {
@@ -344,9 +356,22 @@ Message: ${sms.body}`,
         const response = await conductor.sendToConductor(message);
         return reply.send({ success: true, sessionId: response.session_id });
       } catch (innerError: any) {
+        // Debug logging to understand error structure
+        console.log('🔍 Error caught in SMS webhook:');
+        console.log('   Type:', innerError.constructor?.name);
+        console.log('   Message:', innerError.message);
+        console.log('   Full error:', innerError.toString());
+        console.log('   Has "Sandbox is probably not running":', innerError.message?.includes('Sandbox is probably not running anymore'));
+        console.log('   Has "NotFoundError":', innerError.message?.includes('NotFoundError'));
+
         // Check if E2B sandbox died (expired after 1 hour)
-        if (innerError.message?.includes('Sandbox is probably not running anymore') ||
-            innerError.message?.includes('NotFoundError')) {
+        const errorMessage = innerError.message || innerError.toString() || '';
+        const isSandboxExpired =
+          errorMessage.includes('Sandbox is probably not running anymore') ||
+          errorMessage.includes('NotFoundError') ||
+          errorMessage.includes('sandbox is not running');
+
+        if (isSandboxExpired) {
           console.log('🔄 E2B sandbox expired, creating new conductor...');
 
           // Reset conductor to force recreation
@@ -359,6 +384,7 @@ Message: ${sms.body}`,
         }
 
         // Re-throw if it's a different error
+        console.log('⚠️  Not a sandbox expiry error, re-throwing...');
         throw innerError;
       }
     } catch (error: any) {
