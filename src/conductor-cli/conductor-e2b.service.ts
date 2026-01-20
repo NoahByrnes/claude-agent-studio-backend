@@ -222,35 +222,39 @@ export class ConductorE2BService {
 
         const executor = new E2BCLIExecutor(sandbox);
 
-        // Check for existing session files from previous conductor (conversation continuity)
-        console.log('   🔍 Checking for existing CLI session files...');
+        // Check for existing session file from previous conductor (single conversation continuity)
+        console.log('   🔍 Checking for existing CLI session file...');
         let cliSessionId: string;
 
         try {
-          // Find session files recursively (claude-cli creates subdirectories like -home-user/)
-          // Exclude subagent directories (only find main session files with UUID names)
+          // Find the session file (should be exactly one if we exported correctly)
+          // Exclude subagent directories
           const sessionCheckResult = await sandbox.commands.run(
-            'find ~/.claude/projects -name "*.jsonl" -type f ! -path "*/subagents/*" 2>/dev/null | grep -E "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\\.jsonl$" | sort -r | head -1',
+            'find ~/.claude/projects -name "*.jsonl" -type f ! -path "*/subagents/*" 2>/dev/null | grep -E "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\\.jsonl$"',
             { timeoutMs: 5000 }
           );
 
           if (sessionCheckResult.exitCode === 0 && sessionCheckResult.stdout.trim()) {
-            // Extract session ID from filename: ~/.claude/projects/<session-id>.jsonl
-            const sessionFilePath = sessionCheckResult.stdout.trim();
-            console.log(`   📁 Found session file path: ${sessionFilePath}`);
+            const sessionFiles = sessionCheckResult.stdout.trim().split('\n').filter(f => f);
+
+            if (sessionFiles.length > 1) {
+              console.log(`   ⚠️  Found ${sessionFiles.length} session files (expected 1). Using most recent.`);
+            }
+
+            // Use the first (or only) session file
+            const sessionFilePath = sessionFiles[0];
+            console.log(`   📁 Found session file: ${sessionFilePath}`);
 
             const sessionIdMatch = sessionFilePath.match(/([a-f0-9-]{36})\.jsonl$/);
 
             if (sessionIdMatch) {
               const existingSessionId = sessionIdMatch[1];
-              console.log(`   ✅ Found existing session file: ${existingSessionId}`);
-              console.log(`   📥 Resuming conversation from previous conductor session...`);
+              console.log(`   ✅ Found session: ${existingSessionId}`);
+              console.log(`   📥 Resuming conversation from previous conductor...`);
 
               // Resume the existing session (preserves full conversation history)
               cliSessionId = existingSessionId;
 
-              // Just use the existing session - it already has the system prompt
-              // No need to send a test message, the session will work on first user message
               console.log(`   ✅ Successfully resumed session ${existingSessionId.substring(0, 8)}...`);
               console.log(`   💬 Conversation continuity preserved!`);
             } else {
@@ -260,7 +264,7 @@ export class ConductorE2BService {
             throw new Error('No session files found');
           }
         } catch (sessionError: any) {
-          // No existing session files or resume failed - start fresh
+          // No existing session file - start fresh
           console.log(`   ℹ️  No resumable session found: ${sessionError.message}`);
           console.log(`   🆕 Starting fresh CLI session...`);
 
@@ -1603,12 +1607,17 @@ You: "Perfect, take your time."
    * Called automatically after each conversation.
    */
   private async exportMemory(): Promise<void> {
-    if (!this.conductorSandbox) {
+    if (!this.conductorSandbox || !this.conductorSession) {
       return;
     }
 
     try {
-      await exportMemoryFromSandbox(this.conductorSandbox.sandbox, 'conductor');
+      // Export only the active session (single conversation continuity)
+      await exportMemoryFromSandbox(
+        this.conductorSandbox.sandbox,
+        'conductor',
+        this.conductorSession.id
+      );
     } catch (error: any) {
       console.error('❌ Memory export failed:', error.message);
       // Don't throw - memory export is not critical

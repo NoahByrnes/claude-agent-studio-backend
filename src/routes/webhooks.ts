@@ -132,6 +132,9 @@ ${email.body}`,
           errorMessage.includes('NotFoundError') ||
           errorMessage.includes('sandbox is not running');
 
+        // Check if session is invalid (orphaned session file)
+        const isSessionInvalid = errorMessage.includes('No conversation found with session ID');
+
         if (isSandboxExpired) {
           console.log('🔄 E2B sandbox expired, creating new conductor...');
 
@@ -144,8 +147,23 @@ ${email.body}`,
           return reply.send({ success: true, sessionId: response.session_id });
         }
 
+        if (isSessionInvalid) {
+          console.log('🔄 Invalid session (orphaned file), clearing memory and creating fresh conductor...');
+
+          // Clear the orphaned session data
+          await clearMemoryBackups('default');
+
+          // Reset conductor to force recreation
+          conductorService = null;
+
+          // Create fresh conductor and retry
+          conductor = await initConductor();
+          const response = await conductor.sendToConductor(message);
+          return reply.send({ success: true, sessionId: response.session_id });
+        }
+
         // Re-throw if it's a different error
-        console.log('⚠️  Not a sandbox expiry error, re-throwing...');
+        console.log('⚠️  Not a recoverable error, re-throwing...');
         throw innerError;
       }
     } catch (error: any) {
@@ -203,6 +221,9 @@ Use when: Conversation gets confused but workers are doing good work
 
 /kill-workers - Kill all workers, keep Stu running
 Use when: Workers are stuck/broken, want to start fresh tasks
+
+/erase-stu - Wipe Stu's memory and kill conductor
+Use when: Want to start completely fresh conversation (no history)
 
 /new-session - NUCLEAR: Kill everything (Stu + all workers)
 Use when: Complete fresh start needed
@@ -297,6 +318,45 @@ Use when: Complete fresh start needed
         }
       }
 
+      // /erase-stu - Wipe Stu's memory and kill conductor (fresh conversation)
+      if (messageBody === '/erase-stu') {
+        console.log(`🗑️  /erase-stu command received - wiping conversation history...`);
+
+        try {
+          if (!e2bApiKey) {
+            throw new Error('E2B_API_KEY not configured');
+          }
+
+          // Kill ALL conductor sandboxes
+          const result = await killAllConductors(E2B_TEMPLATES.CONDUCTOR, e2bApiKey);
+
+          // Clear conductor state and memory backups (conversation history)
+          await clearConductorState();
+          await clearMemoryBackups('default');
+
+          // Reset conductor service to force fresh creation
+          conductorService = null;
+
+          console.log(`✅ Stu's memory erased: ${result.killed.length}/${result.total} conductors killed`);
+
+          await sendSMS(
+            sms.from,
+            `🗑️ Stu's memory wiped! Killed ${result.killed.length} conductor${result.killed.length !== 1 ? 's' : ''}. Next message starts fresh conversation.`,
+            'default-user'
+          );
+
+          return reply.send({
+            success: true,
+            message: 'Stu memory erased',
+            result,
+          });
+        } catch (error: any) {
+          console.error(`❌ Failed to erase Stu: ${error.message}`);
+          await sendSMS(sms.from, `❌ Failed to erase Stu: ${error.message}`, 'default-user');
+          return reply.code(500).send({ success: false, error: error.message });
+        }
+      }
+
       // /new-session - Nuclear option: Kill EVERYTHING
       if (messageBody === '/new-session') {
         console.log(`🔄 /new-session command received - NUCLEAR RESET (kill all E2B sandboxes)...`);
@@ -371,6 +431,9 @@ Message: ${sms.body}`,
           errorMessage.includes('NotFoundError') ||
           errorMessage.includes('sandbox is not running');
 
+        // Check if session is invalid (orphaned session file)
+        const isSessionInvalid = errorMessage.includes('No conversation found with session ID');
+
         if (isSandboxExpired) {
           console.log('🔄 E2B sandbox expired, creating new conductor...');
 
@@ -383,8 +446,23 @@ Message: ${sms.body}`,
           return reply.send({ success: true, sessionId: response.session_id });
         }
 
+        if (isSessionInvalid) {
+          console.log('🔄 Invalid session (orphaned file), clearing memory and creating fresh conductor...');
+
+          // Clear the orphaned session data
+          await clearMemoryBackups('default');
+
+          // Reset conductor to force recreation
+          conductorService = null;
+
+          // Create fresh conductor and retry
+          conductor = await initConductor();
+          const response = await conductor.sendToConductor(message);
+          return reply.send({ success: true, sessionId: response.session_id });
+        }
+
         // Re-throw if it's a different error
-        console.log('⚠️  Not a sandbox expiry error, re-throwing...');
+        console.log('⚠️  Not a recoverable error, re-throwing...');
         throw innerError;
       }
     } catch (error: any) {

@@ -40,7 +40,8 @@ export async function initMemoryBackup(): Promise<void> {
  */
 export async function exportMemoryFromSandbox(
   sandbox: Sandbox,
-  conductorId: string
+  conductorId: string,
+  activeSessionId?: string
 ): Promise<void> {
   try {
     console.log(`📦 Exporting full conductor state from sandbox ${sandbox.sandboxId}...`);
@@ -57,18 +58,25 @@ export async function exportMemoryFromSandbox(
       return;
     }
 
-    // Build list of directories to include in tarball
+    // Build list of directories/files to include in tarball
     const dirsToBackup: string[] = [];
     if (hasClaudeMem) {
       dirsToBackup.push('.claude-mem');
       console.log('   Including .claude-mem directory (learned knowledge)');
     }
     if (hasClaudeProjects) {
-      dirsToBackup.push('.claude/projects');
-      console.log('   Including .claude/projects directory (conversation history)');
+      if (activeSessionId) {
+        // Only backup the active session file (single conversation continuity)
+        dirsToBackup.push(`.claude/projects/-home-user/${activeSessionId}.jsonl`);
+        console.log(`   Including active session only: ${activeSessionId}.jsonl`);
+      } else {
+        // Backup all sessions (legacy behavior)
+        dirsToBackup.push('.claude/projects');
+        console.log('   Including .claude/projects directory (all conversation history)');
+      }
     }
 
-    // Create tarball with both directories (if they exist)
+    // Create tarball
     const tarCommand = `cd /home/user && tar -czf /tmp/conductor-memory.tar.gz ${dirsToBackup.join(' ')}`;
     const tarResult = await sandbox.commands.run(tarCommand);
 
