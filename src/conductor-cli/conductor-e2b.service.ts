@@ -249,17 +249,8 @@ export class ConductorE2BService {
               // Resume the existing session (preserves full conversation history)
               cliSessionId = existingSessionId;
 
-              // Send a continuation message to verify session is alive
-              // This also appends the system prompt as a system message
-              const systemPrompt = this.config.systemPrompt || this.getDefaultConductorPrompt();
-              const testResponse = await executor.execute(
-                'Session resumed after container restart. Ready to continue.',
-                {
-                  sessionId: existingSessionId,
-                  appendSystemPrompt: systemPrompt, // Update system context
-                }
-              );
-
+              // Just use the existing session - it already has the system prompt
+              // No need to send a test message, the session will work on first user message
               console.log(`   ✅ Successfully resumed session ${existingSessionId.substring(0, 8)}...`);
               console.log(`   💬 Conversation continuity preserved!`);
             } else {
