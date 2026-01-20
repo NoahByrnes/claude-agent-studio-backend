@@ -105,7 +105,8 @@ export async function exportMemoryFromSandbox(
     console.log(`      buffer.byteOffset: ${buffer.byteOffset}`);
     console.log(`      buffer.buffer.byteLength: ${buffer.buffer.byteLength}`);
 
-    const base64Data = buffer.toString('base64');
+    // Convert to base64 for PostgreSQL storage
+    const base64ForStorage = buffer.toString('base64');
     const sizeBytes = buffer.length.toString();
 
     // Save to PostgreSQL (primary storage)
@@ -119,7 +120,7 @@ export async function exportMemoryFromSandbox(
         // Update existing
         await db.update(conductorMemory)
           .set({
-            memory_data: base64Data,
+            memory_data: base64ForStorage,
             size_bytes: sizeBytes,
             updated_at: new Date(),
           })
@@ -128,7 +129,7 @@ export async function exportMemoryFromSandbox(
         // Insert new
         await db.insert(conductorMemory).values({
           conductor_id: conductorId,
-          memory_data: base64Data,
+          memory_data: base64ForStorage,
           size_bytes: sizeBytes,
         });
       }
@@ -155,7 +156,7 @@ export async function exportMemoryFromSandbox(
     if (redisClient) {
       try {
         const redisKey = `${REDIS_MEMORY_KEY_PREFIX}${conductorId}`;
-        await redisClient.setex(redisKey, REDIS_CACHE_TTL, base64Data);
+        await redisClient.setex(redisKey, REDIS_CACHE_TTL, base64ForStorage);
         console.log(`   Cached in Redis (24h TTL)`);
       } catch (redisError: any) {
         console.warn(`⚠️  Redis cache failed (non-critical): ${redisError.message}`);
