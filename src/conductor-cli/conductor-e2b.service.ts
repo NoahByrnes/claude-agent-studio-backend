@@ -227,8 +227,9 @@ export class ConductorE2BService {
         let cliSessionId: string;
 
         try {
+          // Find session files recursively (claude-cli creates subdirectories like -home-user/)
           const sessionCheckResult = await sandbox.commands.run(
-            'ls -t ~/.claude/projects/*.jsonl 2>/dev/null | head -1',
+            'find ~/.claude/projects -name "*.jsonl" -type f 2>/dev/null | sort -r | head -1',
             { timeoutMs: 5000 }
           );
 
