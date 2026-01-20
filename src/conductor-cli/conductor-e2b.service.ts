@@ -228,14 +228,17 @@ export class ConductorE2BService {
 
         try {
           // Find session files recursively (claude-cli creates subdirectories like -home-user/)
+          // Exclude subagent directories (only find main session files with UUID names)
           const sessionCheckResult = await sandbox.commands.run(
-            'find ~/.claude/projects -name "*.jsonl" -type f 2>/dev/null | sort -r | head -1',
+            'find ~/.claude/projects -name "*.jsonl" -type f ! -path "*/subagents/*" 2>/dev/null | grep -E "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\\.jsonl$" | sort -r | head -1',
             { timeoutMs: 5000 }
           );
 
           if (sessionCheckResult.exitCode === 0 && sessionCheckResult.stdout.trim()) {
             // Extract session ID from filename: ~/.claude/projects/<session-id>.jsonl
             const sessionFilePath = sessionCheckResult.stdout.trim();
+            console.log(`   📁 Found session file path: ${sessionFilePath}`);
+
             const sessionIdMatch = sessionFilePath.match(/([a-f0-9-]{36})\.jsonl$/);
 
             if (sessionIdMatch) {
