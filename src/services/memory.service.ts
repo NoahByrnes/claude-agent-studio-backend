@@ -80,34 +80,26 @@ export async function exportMemoryFromSandbox(
     }
 
     // Download the tarball
-    // CRITICAL: Must verify the tar file exists and has correct size
+    // CRITICAL: E2B files.read() corrupts binary files by returning them as strings
+    // Solution: Read as base64 via shell, then decode
+    console.log(`   📁 Verifying tar file on disk...`);
     const tarCheck = await sandbox.commands.run('ls -lh /tmp/conductor-memory.tar.gz');
-    console.log(`   📁 Tar file on disk: ${tarCheck.stdout.trim()}`);
+    console.log(`      ${tarCheck.stdout.trim()}`);
 
-    // Read the file - E2B may return string or ArrayBuffer
-    const memoryDataRaw = await sandbox.files.read('/tmp/conductor-memory.tar.gz');
+    // Read file as base64 (preserves all bytes)
+    console.log(`   📥 Reading tar as base64 via shell...`);
+    const base64Result = await sandbox.commands.run('base64 /tmp/conductor-memory.tar.gz');
 
-    // DIAGNOSTIC: Log what we received from E2B
-    console.log(`   📥 Downloaded from E2B:`);
-    console.log(`      Type: ${memoryDataRaw?.constructor?.name || typeof memoryDataRaw}`);
-
-    // Handle both string and ArrayBuffer returns from E2B
-    let buffer: Buffer;
-    if (typeof memoryDataRaw === 'string') {
-      // E2B returned string - this is WRONG for binary files
-      // The file content was corrupted during read
-      console.error(`      ⚠️  E2B returned String for binary .tar.gz file!`);
-      console.error(`      String length: ${memoryDataRaw.length} chars`);
-      console.error(`      First 100 chars: ${memoryDataRaw.substring(0, 100)}`);
-
-      // Try to salvage by reading as latin1 (byte-to-char mapping)
-      buffer = Buffer.from(memoryDataRaw, 'latin1');
-      console.log(`      Converted via latin1: ${buffer.length} bytes`);
-    } else {
-      // E2B returned ArrayBuffer (expected for binary)
-      console.log(`      Converting from ArrayBuffer...`);
-      buffer = Buffer.from(memoryDataRaw as ArrayBuffer);
+    if (base64Result.exitCode !== 0) {
+      throw new Error(`Failed to read tar file: ${base64Result.stderr}`);
     }
+
+    const base64Data = base64Result.stdout.trim();
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    console.log(`   ✅ Downloaded via base64:`);
+    console.log(`      Base64 length: ${base64Data.length} chars`);
+    console.log(`      Decoded to: ${buffer.length} bytes`);
     console.log(`   📦 Converted to Buffer:`);
     console.log(`      buffer.length: ${buffer.length}`);
     console.log(`      buffer.byteOffset: ${buffer.byteOffset}`);
